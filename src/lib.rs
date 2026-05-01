@@ -2,9 +2,11 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+mod backup;
 mod cache;
 mod error;
 mod github;
+mod install;
 mod platform;
 mod renew;
 mod repo;

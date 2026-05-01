@@ -1,6 +1,8 @@
+use crate::backup;
 use crate::cache;
 use crate::error::{Error, Result};
 use crate::github;
+use crate::install;
 use crate::platform;
 use crate::repo::RepoSlug;
 use crate::version::{InstalledVersion, Update, parse_tag};
@@ -254,61 +256,78 @@ impl Renew {
             self.repo.as_path(),
             self.download_timeout.as_secs()
         );
-        let platform = platform::current_platform()?;
-        let info = github::latest_release(
+        let install_path = self.resolve_install_path()?;
+        self.preflight()?;
+        let token = self.resolve_token();
+        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        install::run(
             &self.repo.as_path(),
-            self.resolve_token().as_deref(),
-            self.network_timeout,
-        )?;
-        let asset_name = format!("{}-{}-{}.tar.gz", self.bin, info.tag_name, platform);
-        let asset = info.find_asset(&asset_name).ok_or(Error::AssetMissing {
-            os: platform.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-        })?;
-        log::debug!("install_latest: asset={}", asset.name);
-        let dest = self.cache_dir.join("download").join(&asset.name);
-        let sha_name = format!("{asset_name}.sha256");
-        let sha_url = asset.browser_download_url.replace(&asset_name, &sha_name);
-        log::debug!(
-            "install_latest: downloading {} -> {:?}",
-            asset.browser_download_url,
-            dest
-        );
-        github::download_asset(
-            &asset.browser_download_url,
-            self.resolve_token().as_deref(),
-            &dest,
+            &self.bin,
+            &self.current,
+            &info,
+            &install_path,
+            &self.cache_dir,
+            &self.data_dir,
+            token.as_deref(),
             self.download_timeout,
-        )?;
-        log::debug!("install_latest: sha_url={}", sha_url);
-        // Phase 4: full pipeline (verify, extract, backup, replace)
-        Err(Error::NoRelease {
-            repo: self.repo.as_path(),
-        })
+        )
     }
 
     /// Install a specific version.
     pub fn install_version(&self, version: &Version) -> Result<InstalledVersion> {
         let tag = format!("v{version}");
         let parsed = parse_tag(&tag)?;
+        log::debug!("install_version: {} on {}", parsed, self.repo.as_path());
+        let install_path = self.resolve_install_path()?;
+        self.preflight()?;
+        let token = self.resolve_token();
+        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        // Verify the requested tag matches what GitHub returned.
         let platform = platform::current_platform()?;
-        log::debug!("install_version: {} platform={}", parsed, platform);
-        // Phase 4: implement install pipeline
-        Err(Error::NoRelease {
-            repo: self.repo.as_path(),
-        })
+        log::debug!("install_version: platform={}", platform);
+        if parse_tag(&info.tag_name)? != parsed {
+            return Err(Error::NoRelease {
+                repo: self.repo.as_path(),
+            });
+        }
+        install::run(
+            &self.repo.as_path(),
+            &self.bin,
+            &self.current,
+            &info,
+            &install_path,
+            &self.cache_dir,
+            &self.data_dir,
+            token.as_deref(),
+            self.download_timeout,
+        )
     }
 
     /// Restore the backup; consumes (deletes) it.
     pub fn revert(&self) -> Result<InstalledVersion> {
-        log::debug!("revert: data_dir={:?}", self.data_dir);
-        // Phase 4: implement revert
-        Err(Error::NoBackup)
+        let install_path = self.resolve_install_path()?;
+        let backup_dir = install::backup_dir_for(&install_path, &self.data_dir);
+        log::debug!("revert: backup_dir={:?}", backup_dir);
+        if !backup::exists(&backup_dir) {
+            return Err(Error::NoBackup);
+        }
+        let meta = backup::restore(&backup_dir, &install_path)?;
+        let from = parse_tag(&meta.version)?;
+        let to = self.current.clone();
+        Ok(InstalledVersion {
+            from,
+            to,
+            path: install_path,
+        })
     }
 
     /// Whether a backup exists for the current install path.
     pub fn has_backup(&self) -> bool {
-        self.backup_dir().map(|d| d.join("meta.yml").exists()).unwrap_or(false)
+        let Ok(install_path) = self.resolve_install_path() else {
+            return false;
+        };
+        let dir = install::backup_dir_for(&install_path, &self.data_dir);
+        backup::exists(&dir)
     }
 
     /// If a newer version is available and stderr is a TTY, print a notice.
@@ -336,15 +355,6 @@ impl Renew {
             Some(p) => Ok(p.clone()),
             None => std::env::current_exe().map_err(Error::Io),
         }
-    }
-
-    pub(crate) fn backup_dir(&self) -> Option<PathBuf> {
-        use sha2::Digest;
-        let path = self.resolve_install_path().ok()?;
-        let canonical = path.canonicalize().unwrap_or(path);
-        let hash = sha2::Sha256::digest(canonical.display().to_string().as_bytes());
-        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-        Some(self.data_dir.join(&hex[..12]).join("backup"))
     }
 }
 
