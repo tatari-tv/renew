@@ -88,6 +88,12 @@ pub(crate) fn exists(backup_dir: &Path) -> bool {
     backup_dir.join("meta.yml").exists() && backup_dir.join("binary").exists()
 }
 
+/// Read backup metadata without consuming (deleting) the backup.
+pub(crate) fn peek(backup_dir: &Path) -> Option<BackupMeta> {
+    let meta_text = std::fs::read_to_string(backup_dir.join("meta.yml")).ok()?;
+    serde_yaml::from_str(&meta_text).ok()
+}
+
 fn atomic_replace(src: &Path, dest: &Path) -> Result<()> {
     match std::fs::rename(src, dest) {
         Ok(()) => Ok(()),

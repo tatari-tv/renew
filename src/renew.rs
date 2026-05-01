@@ -16,13 +16,13 @@ const DEFAULT_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_NETWORK_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum TokenSource {
     EnvAuto,
     Explicit(Option<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Renew {
     pub(crate) repo: RepoSlug,
     pub(crate) bin: String,
@@ -239,7 +239,11 @@ impl Renew {
                     source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "install path has no parent"),
                 })?
                 .to_path_buf();
-            let sentinel = parent.join(".renew-preflight");
+            let sentinel_name = path
+                .file_name()
+                .map(|n| format!("{}.preflight", n.to_string_lossy()))
+                .unwrap_or_else(|| ".preflight".to_string());
+            let sentinel = parent.join(sentinel_name);
             std::fs::write(&sentinel, b"").map_err(|e| Error::InstallPath {
                 path: path.clone(),
                 source: e,

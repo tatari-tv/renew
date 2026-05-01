@@ -93,6 +93,27 @@ fn test_restore_returns_no_backup_when_absent() {
 }
 
 #[test]
+fn test_peek_returns_meta_without_deleting_backup() {
+    let tmp = TempDir::new().unwrap();
+    let binary = tmp.path().join("mybin");
+    write_fake_binary(&binary);
+    let backup_dir = tmp.path().join("backup");
+
+    capture(&backup_dir, &binary, &v("0.4.3")).unwrap();
+    let meta = peek(&backup_dir).unwrap();
+    assert_eq!(meta.version, "0.4.3");
+
+    // Backup must still exist after peek
+    assert!(exists(&backup_dir));
+}
+
+#[test]
+fn test_peek_returns_none_when_absent() {
+    let tmp = TempDir::new().unwrap();
+    assert!(peek(tmp.path()).is_none());
+}
+
+#[test]
 fn test_meta_serializes_kebab_case() {
     let meta = BackupMeta {
         version: "0.4.3".to_string(),

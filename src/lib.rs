@@ -4,6 +4,7 @@
 
 mod backup;
 mod cache;
+mod cmd;
 mod error;
 mod github;
 mod install;
@@ -12,6 +13,7 @@ mod renew;
 mod repo;
 mod version;
 
+pub use cmd::UpdateCmd;
 pub use error::{Error, Result};
 pub use renew::Renew;
 pub use version::{InstalledVersion, Update};
