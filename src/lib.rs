@@ -28,7 +28,11 @@ macro_rules! renew {
         )
     };
     (bin = $bin:expr) => {
-        $crate::Renew::new(env!("CARGO_PKG_REPOSITORY"), $bin, env!("CARGO_PKG_VERSION"))
+        $crate::Renew::new(
+            env!("CARGO_PKG_REPOSITORY"),
+            $bin,
+            env!("CARGO_PKG_VERSION"),
+        )
     };
     (repo = $repo:expr) => {
         $crate::Renew::new($repo, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))

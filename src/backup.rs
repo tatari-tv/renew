@@ -14,7 +14,11 @@ pub(crate) struct BackupMeta {
 
 /// Atomically capture the current binary into `backup_dir` before overwriting.
 /// Writes binary first, meta last — a torn write leaves the old backup intact.
-pub(crate) fn capture(backup_dir: &Path, current_binary: &Path, current_version: &Version) -> Result<()> {
+pub(crate) fn capture(
+    backup_dir: &Path,
+    current_binary: &Path,
+    current_version: &Version,
+) -> Result<()> {
     std::fs::create_dir_all(backup_dir).map_err(Error::Io)?;
 
     // Write binary atomically: copy to .new, rename to final.

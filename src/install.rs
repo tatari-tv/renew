@@ -50,11 +50,27 @@ pub(crate) fn run(
     let tarball_dest = download_dir.join(&asset_name);
     let sha_dest = download_dir.join(&sha_name);
 
-    log::debug!("install: downloading tarball {}", asset.browser_download_url);
-    github::download_asset(&asset.browser_download_url, token, &tarball_dest, download_timeout)?;
+    log::debug!(
+        "install: downloading tarball {}",
+        asset.browser_download_url
+    );
+    github::download_asset(
+        &asset.browser_download_url,
+        token,
+        &tarball_dest,
+        download_timeout,
+    )?;
 
-    log::debug!("install: downloading sidecar {}", sha_asset.browser_download_url);
-    github::download_asset(&sha_asset.browser_download_url, token, &sha_dest, download_timeout)?;
+    log::debug!(
+        "install: downloading sidecar {}",
+        sha_asset.browser_download_url
+    );
+    github::download_asset(
+        &sha_asset.browser_download_url,
+        token,
+        &sha_dest,
+        download_timeout,
+    )?;
 
     verify_sha256(&tarball_dest, &sha_dest)?;
     log::debug!("install: sha256 verified");
@@ -76,7 +92,13 @@ pub(crate) fn run(
     let _ = std::fs::remove_file(&sha_dest);
     let _ = std::fs::remove_dir(&download_dir);
 
-    log::info!("install: {} {} -> {} at {:?}", repo, current, target, install_path);
+    log::info!(
+        "install: {} {} -> {} at {:?}",
+        repo,
+        current,
+        target,
+        install_path
+    );
 
     Ok(InstalledVersion {
         from: current.clone(),

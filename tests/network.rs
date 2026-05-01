@@ -67,20 +67,35 @@ fn install_latest_then_revert_roundtrip() {
         .with_data_dir(data_dir.clone())
         .with_cache_dir(cache_dir);
 
-    let result = r.install_latest().unwrap_or_else(|e| panic!("install_latest: {e}"));
+    let result = r
+        .install_latest()
+        .unwrap_or_else(|e| panic!("install_latest: {e}"));
 
-    assert!(install_path.exists(), "install_path should exist after install");
+    assert!(
+        install_path.exists(),
+        "install_path should exist after install"
+    );
 
     let installed = std::fs::read(&install_path).unwrap();
-    assert_ne!(installed, fake_marker, "fake current should have been replaced");
+    assert_ne!(
+        installed, fake_marker,
+        "fake current should have been replaced"
+    );
     assert!(
         installed.len() > fake_marker.len(),
         "real ccu binary should be larger than fake"
     );
 
     use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(&install_path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o755, "installed binary should be 0o755, got {mode:o}");
+    let mode = std::fs::metadata(&install_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o755,
+        "installed binary should be 0o755, got {mode:o}"
+    );
 
     assert_eq!(result.from, Version::parse("0.0.1").unwrap());
     assert!(result.to > Version::parse("0.4.0").unwrap());
@@ -93,7 +108,10 @@ fn install_latest_then_revert_roundtrip() {
     assert_eq!(reverted.from, Version::parse("0.0.1").unwrap());
 
     let after_revert = std::fs::read(&install_path).unwrap();
-    assert_eq!(after_revert, fake_marker, "revert should restore the fake bytes");
+    assert_eq!(
+        after_revert, fake_marker,
+        "revert should restore the fake bytes"
+    );
 
     assert!(!r.has_backup(), "backup should be consumed after revert");
 }

@@ -49,8 +49,16 @@ fn download_agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
-pub(crate) fn latest_release(repo_path: &str, token: Option<&str>, timeout: Duration) -> Result<ReleaseInfo> {
-    log::debug!("latest_release: repo={} auth={}", repo_path, token.is_some());
+pub(crate) fn latest_release(
+    repo_path: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<ReleaseInfo> {
+    log::debug!(
+        "latest_release: repo={} auth={}",
+        repo_path,
+        token.is_some()
+    );
 
     let agent = api_agent(timeout);
     let url = format!("{GITHUB_API_BASE}/repos/{repo_path}/releases/latest");
@@ -67,11 +75,20 @@ pub(crate) fn latest_release(repo_path: &str, token: Option<&str>, timeout: Dura
         .map_err(Error::Network)?;
 
     let info: ReleaseInfo = serde_json::from_str(&text)?;
-    log::debug!("latest_release: tag={} assets={}", info.tag_name, info.assets.len());
+    log::debug!(
+        "latest_release: tag={} assets={}",
+        info.tag_name,
+        info.assets.len()
+    );
     Ok(info)
 }
 
-pub(crate) fn download_asset(url: &str, token: Option<&str>, dest: &Path, timeout: Duration) -> Result<()> {
+pub(crate) fn download_asset(
+    url: &str,
+    token: Option<&str>,
+    dest: &Path,
+    timeout: Duration,
+) -> Result<()> {
     log::debug!("download_asset: url={} auth={}", url, token.is_some());
 
     // Use the download agent (RedirectAuthHeaders::Never) to ensure the GitHub
