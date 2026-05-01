@@ -2,7 +2,9 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+mod cache;
 mod error;
+mod github;
 mod platform;
 mod renew;
 mod repo;

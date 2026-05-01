@@ -1,7 +1,10 @@
+use crate::cache;
 use crate::error::{Error, Result};
+use crate::github;
 use crate::platform;
 use crate::repo::RepoSlug;
 use crate::version::{InstalledVersion, Update, parse_tag};
+use chrono::Utc;
 use semver::Version;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -94,26 +97,125 @@ impl Renew {
     /// Honors the cache; only hits GitHub if cache is stale or absent.
     pub fn check_latest(&self) -> Result<Option<Update>> {
         log::debug!(
-            "check_latest: repo={} bin={} current={} ttl={}s timeout={}s cache_dir={:?}",
+            "check_latest: repo={} bin={} current={} ttl={}s",
             self.repo.as_path(),
             self.bin,
             self.current,
-            self.cache_ttl.as_secs(),
-            self.network_timeout.as_secs(),
-            self.cache_dir
+            self.cache_ttl.as_secs()
         );
-        let token = self.resolve_token();
-        log::debug!("check_latest: auth={}", token.is_some());
-        // Phase 3: implement cache + GitHub client
-        Err(Error::NoRelease {
-            repo: self.repo.as_path(),
-        })
+
+        if let Some(cached) = cache::load(&self.cache_dir) {
+            if cached.is_fresh(self.cache_ttl) {
+                log::debug!("check_latest: cache hit, latest={}", cached.latest_version);
+                return self.compare_cached(&cached.latest_version);
+            }
+            log::debug!("check_latest: cache stale, refreshing");
+        }
+
+        self.refresh_and_compare(false)
     }
 
-    /// Force a network call, bypassing the cache.
+    /// Force a network call, bypassing the cache. Still updates the cache afterward.
     pub fn check_latest_refresh(&self) -> Result<Option<Update>> {
         log::debug!("check_latest_refresh: {}", self.repo.as_path());
-        self.check_latest()
+        self.refresh_and_compare(true)
+    }
+
+    fn compare_cached(&self, latest_str: &str) -> Result<Option<Update>> {
+        let latest = parse_tag(latest_str)?;
+        if latest > self.current {
+            Ok(Some(Update {
+                current: self.current.clone(),
+                latest: latest.clone(),
+                tag: format!("v{latest}"),
+                release_url: String::new(),
+                published_at: chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn refresh_and_compare(&self, force: bool) -> Result<Option<Update>> {
+        let lock_path = cache::lock_path(&self.cache_dir);
+        let _ = std::fs::create_dir_all(&self.cache_dir);
+
+        // Acquire a non-blocking exclusive lock to serialize network calls.
+        // If the lock is held (another process is refreshing), fall through to
+        // whatever is in the cache (possibly stale) rather than blocking.
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path);
+
+        let lock_file = match lock_file {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("cache: could not open lock file: {e}; falling through to cache");
+                return self.fallback_to_cache();
+            }
+        };
+
+        // try_lock is available on File in Rust 1.89+
+        match lock_file.try_lock() {
+            Ok(()) => {}
+            Err(_) if !force => {
+                log::debug!("check_latest: lock held by another process, using existing cache");
+                return self.fallback_to_cache();
+            }
+            Err(e) => {
+                log::warn!("check_latest: could not acquire lock: {e}; using existing cache");
+                return self.fallback_to_cache();
+            }
+        }
+
+        let token = self.resolve_token();
+        let result = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout);
+
+        let info = match result {
+            Ok(info) => info,
+            Err(e) => {
+                log::warn!("check_latest: network error: {e}; falling back to cache");
+                return self.fallback_to_cache().or(Err(e));
+            }
+        };
+
+        let latest = match parse_tag(&info.tag_name) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("check_latest: bad tag {}: {e}", info.tag_name);
+                return Err(e);
+            }
+        };
+
+        let entry = cache::CacheEntry {
+            latest_version: latest.to_string(),
+            checked_at: Utc::now(),
+        };
+        if let Err(e) = cache::save(&self.cache_dir, &entry) {
+            log::warn!("check_latest: could not save cache: {e}");
+        }
+
+        if latest > self.current {
+            let published_at = info.published_at.parse().unwrap_or(Utc::now());
+            Ok(Some(Update {
+                current: self.current.clone(),
+                latest,
+                tag: info.tag_name,
+                release_url: info.html_url,
+                published_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn fallback_to_cache(&self) -> Result<Option<Update>> {
+        match cache::load(&self.cache_dir) {
+            Some(cached) => self.compare_cached(&cached.latest_version),
+            None => Ok(None),
+        }
     }
 
     /// Verify the install path is writable without doing a full install.
@@ -147,10 +249,39 @@ impl Renew {
 
     /// Download, verify, extract, backup, and atomically replace the binary.
     pub fn install_latest(&self) -> Result<InstalledVersion> {
-        log::debug!("install_latest: download_timeout={}s", self.download_timeout.as_secs());
+        log::debug!(
+            "install_latest: repo={} download_timeout={}s",
+            self.repo.as_path(),
+            self.download_timeout.as_secs()
+        );
         let platform = platform::current_platform()?;
-        log::debug!("install_latest: platform={}", platform);
-        // Phase 4: implement install pipeline
+        let info = github::latest_release(
+            &self.repo.as_path(),
+            self.resolve_token().as_deref(),
+            self.network_timeout,
+        )?;
+        let asset_name = format!("{}-{}-{}.tar.gz", self.bin, info.tag_name, platform);
+        let asset = info.find_asset(&asset_name).ok_or(Error::AssetMissing {
+            os: platform.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+        })?;
+        log::debug!("install_latest: asset={}", asset.name);
+        let dest = self.cache_dir.join("download").join(&asset.name);
+        let sha_name = format!("{asset_name}.sha256");
+        let sha_url = asset.browser_download_url.replace(&asset_name, &sha_name);
+        log::debug!(
+            "install_latest: downloading {} -> {:?}",
+            asset.browser_download_url,
+            dest
+        );
+        github::download_asset(
+            &asset.browser_download_url,
+            self.resolve_token().as_deref(),
+            &dest,
+            self.download_timeout,
+        )?;
+        log::debug!("install_latest: sha_url={}", sha_url);
+        // Phase 4: full pipeline (verify, extract, backup, replace)
         Err(Error::NoRelease {
             repo: self.repo.as_path(),
         })
@@ -160,9 +291,8 @@ impl Renew {
     pub fn install_version(&self, version: &Version) -> Result<InstalledVersion> {
         let tag = format!("v{version}");
         let parsed = parse_tag(&tag)?;
-        log::debug!("install_version: {}", parsed);
         let platform = platform::current_platform()?;
-        log::debug!("install_version: platform={}", platform);
+        log::debug!("install_version: {} platform={}", parsed, platform);
         // Phase 4: implement install pipeline
         Err(Error::NoRelease {
             repo: self.repo.as_path(),
