@@ -85,6 +85,16 @@ impl Renew {
         self
     }
 
+    pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
+        self.data_dir = dir;
+        self
+    }
+
+    pub fn with_cache_dir(mut self, dir: PathBuf) -> Self {
+        self.cache_dir = dir;
+        self
+    }
+
     pub(crate) fn resolve_token(&self) -> Option<String> {
         match &self.token {
             TokenSource::EnvAuto => std::env::var("GH_TOKEN")
