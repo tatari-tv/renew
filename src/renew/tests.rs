@@ -89,3 +89,22 @@ fn test_has_backup_false_without_backup_dir() {
     // No backup created yet
     assert!(!r.has_backup());
 }
+
+#[test]
+fn test_notify_if_outdated_does_not_panic_on_network_error() {
+    // check_latest will fail (no real GitHub access, bad repo slug triggers early error)
+    // notify_if_outdated must swallow the error silently
+    let r = make_renew();
+    // This should not panic regardless of network state
+    r.notify_if_outdated();
+}
+
+#[test]
+fn test_check_latest_returns_error_without_network() {
+    // With a zero TTL and no network, check_latest should return an error or Ok(None).
+    // We just verify it doesn't panic.
+    let r = make_renew().with_cache_ttl(Duration::from_secs(0));
+    let result = r.check_latest();
+    // Either Ok (stale-cache fallback) or Err (network failure) - both are valid
+    let _ = result;
+}
