@@ -16,6 +16,22 @@ const DEFAULT_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_NETWORK_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
+/// XDG data dir, honoring `$XDG_DATA_HOME` and falling back to `$HOME/.local/share`.
+///
+/// We deliberately do NOT use the `dirs` config/data helpers: those honor
+/// `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` only on Linux. On macOS they resolve via system
+/// APIs and return `~/Library/...`, ignoring the env vars. These helpers resolve to the
+/// same XDG layout on every platform.
+pub fn xdg_data_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+    dirs::home_dir().map(|h| h.join(".local").join("share"))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum TokenSource {
     EnvAuto,
@@ -53,7 +69,7 @@ impl Renew {
             .unwrap_or_else(|| PathBuf::from(".cache"))
             .join(&bin);
 
-        let data_dir = dirs::data_local_dir()
+        let data_dir = xdg_data_dir()
             .unwrap_or_else(|| PathBuf::from(".local/share"))
             .join(&bin);
 
