@@ -45,7 +45,7 @@ Layers stack; each built on the one below:
 - **(a) Core methods** — `Renew::check_latest`, `Renew::install_latest`. Sync, fallible, return structured data.
 - **(b) Notify helper** — `Renew::notify_if_outdated`. One-line drop-in for `main()`. Infallible (swallows network errors); prints to stderr.
 - **(c) Clap subcommand** — `UpdateCmd` implementing `clap::Args`. Drop-in so Consumers get `<bin> update` for free.
-- **Macro** — `renew::renew!()` expands to `Renew::new(env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))`. Override args (`repo = "..."`, `bin = "..."`) when defaults don't fit. Sugar only.
+- **Macro** — `renew::renew!()` expands to `Renew::new(env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_NAME"), <current>)`, where `<current>` is `option_env!("GIT_DESCRIBE")` (the Consumer build script's `git describe`, when set and non-empty) and falls back to `env!("CARGO_PKG_VERSION")` otherwise. This matches the `--version` every fleet Consumer prints (`GIT_DESCRIBE`); `Renew::new` normalizes the describe string (strips a `v` prefix and a `-N-gSHA[-dirty]` suffix) before comparing. Override args (`repo = "..."`, `bin = "..."`) when defaults don't fit. Sugar only.
 
 Power users skip the helpers and call core methods directly.
 

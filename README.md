@@ -46,19 +46,76 @@ enum Cmd {
 fn main() {
     env_logger::init();
 
-    // Passive notice on stderr if a newer version is out (TTY-gated, infallible).
-    let r = renew!().expect("repository metadata");
-    r.notify_if_outdated();
-
     match Cli::parse().cmd {
-        Cmd::Today => { /* ... */ }
-        Cmd::Update(cmd) => std::process::exit(cmd.run(&r)),
+        Cmd::Today => {
+            // Passive notice on stderr if a newer version is out (TTY-gated).
+            // Degrade to a debug log on a construction error; never abort.
+            match renew!() {
+                Ok(r) => r.notify_if_outdated(),
+                Err(e) => log::debug!("renew unavailable: {e}"),
+            }
+            /* ... */
+        }
+        // The `update` subcommand maps a construction error to renew's exit 2.
+        Cmd::Update(cmd) => match renew!() {
+            Ok(r) => std::process::exit(cmd.run(&r)),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
     }
 }
 ```
 
 That's the full integration. `cargo run -- update check` / `update install --yes` /
 `update revert --yes` work out of the box.
+
+## Current version source
+
+`renew!()` resolves the running binary's version from **`GIT_DESCRIBE`** — the
+`git describe --tags` string a Consumer's `build.rs` emits — when it is set and
+non-empty, falling back to `CARGO_PKG_VERSION` otherwise. This matches the version
+every fleet Consumer already prints from `--version`, so the "current" version renew
+compares is the one the binary actually reports.
+
+`Renew::new` normalizes the describe string before comparing: it strips a leading `v`
+and a trailing `-<count>-g<sha>[-dirty]` describe suffix, leaving the base semver
+(`v1.2.1-3-gabc123` → `1.2.1`), while preserving a genuine prerelease (`1.2.1-rc.1`).
+A bare SHA (untagged build) or an empty/whitespace `GIT_DESCRIBE` is a construction
+error — see the note below on handling it.
+
+For this to work the Consumer's `build.rs` must emit `GIT_DESCRIBE`, and should guard
+it behind `output.status.success()` so a git failure yields the `CARGO_PKG_VERSION`
+fallback rather than an empty string:
+
+```rust
+// build.rs
+let describe = std::process::Command::new("git")
+    .args(["describe", "--tags", "--always"])
+    .output()
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
+```
+
+### Handling a construction error
+
+`renew!()` returns `Result` and parses the current version eagerly, so an unparseable
+version (bare SHA, malformed describe) is an `Err` **before** `notify_if_outdated` runs.
+Do not `?`-propagate it on the passive-notice path — that would abort every command.
+Degrade instead, and reserve the loud exit for the `update` subcommand:
+
+```rust
+// Passive notice: degrade to a debug log, never abort other commands.
+match renew::renew!() {
+    Ok(r) => r.notify_if_outdated(),
+    Err(e) => log::debug!("renew unavailable: {e}"),
+}
+```
 
 ## Explicit form
 

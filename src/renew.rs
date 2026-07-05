@@ -5,7 +5,7 @@ use crate::github;
 use crate::install;
 use crate::platform;
 use crate::repo::RepoSlug;
-use crate::version::{InstalledVersion, Update, parse_tag};
+use crate::version::{InstalledVersion, Update, parse_current, parse_tag};
 use chrono::Utc;
 use semver::Version;
 use std::io::IsTerminal;
@@ -60,10 +60,7 @@ impl Renew {
     ) -> Result<Self> {
         let repo = RepoSlug::parse(repo.as_ref())?;
         let bin = bin.as_ref().to_string();
-        let current = Version::parse(current.as_ref()).map_err(|e| Error::InvalidTag {
-            tag: current.as_ref().to_string(),
-            source: e,
-        })?;
+        let current = parse_current(current.as_ref())?;
 
         let cache_dir = dirs::cache_dir()
             .unwrap_or_else(|| PathBuf::from(".cache"))

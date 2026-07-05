@@ -18,29 +18,55 @@ pub use error::{Error, Result};
 pub use renew::Renew;
 pub use version::{InstalledVersion, Update};
 
+/// Internal: the single source-selection expression shared by every `renew!()` arm.
+///
+/// Expands at the **consumer's** call site (macro expansion happens during the
+/// consumer crate's compilation), so `option_env!`/`env!` read the consumer build
+/// script's `GIT_DESCRIBE` and the consumer's `CARGO_PKG_VERSION` — never renew's own.
+/// The `.filter` guards a consumer build script that emits an empty/whitespace
+/// `GIT_DESCRIBE` on git failure, falling back to `CARGO_PKG_VERSION`.
+///
+/// Not part of the public API; call `renew!()` instead.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __renew_current_version {
+    () => {
+        option_env!("GIT_DESCRIBE")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+    };
+}
+
 #[macro_export]
 macro_rules! renew {
     () => {
         $crate::Renew::new(
             env!("CARGO_PKG_REPOSITORY"),
             env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION"),
+            $crate::__renew_current_version!(),
         )
     };
     (bin = $bin:expr) => {
         $crate::Renew::new(
             env!("CARGO_PKG_REPOSITORY"),
             $bin,
-            env!("CARGO_PKG_VERSION"),
+            $crate::__renew_current_version!(),
         )
     };
     (repo = $repo:expr) => {
-        $crate::Renew::new($repo, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+        $crate::Renew::new(
+            $repo,
+            env!("CARGO_PKG_NAME"),
+            $crate::__renew_current_version!(),
+        )
     };
     (repo = $repo:expr, bin = $bin:expr) => {
-        $crate::Renew::new($repo, $bin, env!("CARGO_PKG_VERSION"))
+        $crate::Renew::new($repo, $bin, $crate::__renew_current_version!())
     };
     (bin = $bin:expr, repo = $repo:expr) => {
-        $crate::Renew::new($repo, $bin, env!("CARGO_PKG_VERSION"))
+        $crate::Renew::new($repo, $bin, $crate::__renew_current_version!())
     };
 }
+
+#[cfg(test)]
+mod tests;
