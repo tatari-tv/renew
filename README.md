@@ -122,6 +122,10 @@ match renew::renew!() {
 }
 ```
 
+The passive notice is TTY-gated (silent in a pipe/redirect). Set `RENEW_FORCE_NOTIFY=1`
+to bypass the TTY gate and print it regardless (testing/debugging the notify path); it
+only bypasses the gate, so an up-to-date binary still prints nothing.
+
 ## Explicit form
 
 When you need to override defaults (TTL, install path, token, timeout):

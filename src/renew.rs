@@ -16,6 +16,24 @@ const DEFAULT_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_NETWORK_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
+/// Env var that forces the passive `notify_if_outdated` notice even when stderr is not
+/// a TTY. Fleet-wide (owned by renew, not any single consumer) - the same variable
+/// works for every CLI built on renew. For testing/debugging the notify path.
+const FORCE_NOTIFY_ENV: &str = "RENEW_FORCE_NOTIFY";
+
+/// True when `RENEW_FORCE_NOTIFY` is set to a truthy value (present, non-empty, and not
+/// `0`/`false`). Only bypasses the TTY gate; the Some/None/Err handling is unchanged
+/// (so an up-to-date binary still prints nothing, and a check error still degrades).
+fn force_notify() -> bool {
+    match std::env::var(FORCE_NOTIFY_ENV) {
+        Ok(v) => {
+            let v = v.trim();
+            !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+        }
+        Err(_) => false,
+    }
+}
+
 /// XDG data dir, honoring `$XDG_DATA_HOME` and falling back to `$HOME/.local/share`.
 ///
 /// We deliberately do NOT use the `dirs` config/data helpers: those honor
@@ -372,7 +390,7 @@ impl Renew {
     /// If a newer version is available and stderr is a TTY, print a notice.
     /// Swallows all errors.
     pub fn notify_if_outdated(&self) {
-        if !std::io::stderr().is_terminal() {
+        if !force_notify() && !std::io::stderr().is_terminal() {
             return;
         }
         match self.check_latest() {

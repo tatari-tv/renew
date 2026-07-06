@@ -108,3 +108,36 @@ fn test_check_latest_returns_error_without_network() {
     // Either Ok (stale-cache fallback) or Err (network failure) - both are valid
     let _ = result;
 }
+
+// Serialize env-var-touching tests to prevent parallel races (see rust conventions).
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn test_force_notify_env_truthiness() {
+    let guard = ENV_LOCK.lock().unwrap();
+    let prior = std::env::var(FORCE_NOTIFY_ENV).ok();
+
+    for (val, expected) in [
+        ("1", true),
+        ("true", true),
+        ("TRUE", true),
+        ("yes", true),
+        ("on", true),
+        ("0", false),
+        ("false", false),
+        ("False", false),
+        ("", false),
+        ("   ", false),
+    ] {
+        unsafe { std::env::set_var(FORCE_NOTIFY_ENV, val) };
+        assert_eq!(force_notify(), expected, "RENEW_FORCE_NOTIFY={val:?}");
+    }
+    unsafe { std::env::remove_var(FORCE_NOTIFY_ENV) };
+    assert!(!force_notify(), "unset -> false");
+
+    match prior {
+        Some(v) => unsafe { std::env::set_var(FORCE_NOTIFY_ENV, v) },
+        None => unsafe { std::env::remove_var(FORCE_NOTIFY_ENV) },
+    }
+    drop(guard); // hold the lock for the whole test; explicit drop keeps the binding used
+}

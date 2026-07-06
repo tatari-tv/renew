@@ -209,6 +209,12 @@ script -qefc "<bin> <some-cmd>" /tmp/tty.out ; grep 'new version' /tmp/tty.out  
   `build.rs` `status.success()` guard.
 - **Exit codes** (`update`): `0` current / installed, `1` update available (`check`
   only), `2` error.
+- **Forcing the passive notice.** The passive notice is TTY-gated (silent in a pipe/
+  redirect). Set `RENEW_FORCE_NOTIFY=1` (fleet-wide, honored by every renew consumer) to
+  bypass the TTY gate and print it regardless - for testing/debugging the notify path.
+  It only bypasses the gate: an up-to-date binary still prints nothing, and a check
+  error still degrades silently. To see a check result on demand instead, use
+  `<bin> update check --refresh`.
 - **Overriding defaults** (TTL, install path, token, timeout) — use the explicit
   `Renew::new(repo, bin, env!("GIT_DESCRIBE"))` builder instead of `renew!()`. The
   no-arg macro is the fleet default; only reach for the builder when you must.
