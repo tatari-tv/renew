@@ -7,6 +7,11 @@ check-latest / download / verify / atomic-replace / backup / revert flow
 behind a small typed API, a passive `notify_if_outdated` helper for
 interactive use, and a reusable `clap::Args` subcommand.
 
+**Integrating renew into a fleet CLI?** Follow the step-by-step
+[integration guide](docs/integration-guide.md) - the canonical recipe
+(`build.rs`, `Cargo.toml`, `cli.rs`, `main.rs` wiring) so every CLI integrates
+identically. `persona-cli` is the reference implementation.
+
 ## Quickstart
 
 Add the dep, pinned to a tag:

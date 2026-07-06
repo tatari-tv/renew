@@ -85,4 +85,76 @@ Zero production code (a verification spike), so no commit for this phase.
   worktree repo — the `main/`+`open/` dirs are two branch worktrees, not two crates —
   with `build.rs`→`GIT_DESCRIBE`, `--version = env!("GIT_DESCRIBE")`, release binaries in
   renew's suffix scheme, and a `build.rs` that already checks `status.success()`). The
-  doc's "clyde is cargo-install-only" line is stale. Final pilot choice pending.
+  doc's "clyde is cargo-install-only" line is stale. **Resolved: pilot is persona** (its
+  code lives here as `tatari-tv/persona-cli`); clyde is a natural fast-follow adopter.
+
+## Phase 2: persona-cli pilot integration
+
+Lives in `tatari-tv/persona-cli` (a separate repo). Committed there, not here.
+
+### Design decisions
+- **Canonical `build.rs` (fleet standard), not just persona's finding-#2 fix.** Owner
+  directed that all fleet CLIs integrate identically. Investigation found `build.rs`
+  had drifted three ways (persona: no `status.success()` guard; renew: guarded, no
+  `--dirty`, 2 rerun lines; clyde: guarded, `--dirty`, 1 rerun line). Replaced persona's
+  with a canonical file that (a) guards `status.success()`, (b) uses `--tags --always
+  --dirty`, (c) resolves the real git dir via `git rev-parse --git-dir` /
+  `--git-common-dir` so `rerun-if-changed` is correct for regular repos, workspace
+  members, AND worktrees (all three prior variants hardcode `.git/HEAD`, which never
+  resolves for a workspace member or worktree - clyde's rebuild-on-tag trigger is dead
+  today), and (d) honors an explicit `GIT_DESCRIBE` env override (CI pinning + the
+  doc's `GIT_DESCRIBE=v1.0.0` test method). Verified end-to-end in throwaway regular +
+  workspace git repos and against clyde's real worktree.
+- **`Update` intercepted via `if let` before `Config::load`/`OktaAuth`** (`src/main.rs`),
+  both arms diverging via `std::process::exit`; the main dispatch `match` carries
+  `Commands::Update(_) => unreachable!(...)` to stay exhaustive. This is the documented
+  early-intercept (update needs neither Persona config nor Okta).
+- **renew added as a local `path` dep** (`renew = { path = "../renew" }`), per the
+  rollout: integrate against unmerged renew, prove e2e, THEN tag `renew v0.2.0` and
+  repin to the tag. Not yet repinned.
+
+### Deviations
+- None from the doc's Phase 2 intent; the canonical `build.rs` is a superset of the
+  doc's "fix `status.success()`" (owner-directed scope expansion for fleet uniformity).
+
+### Tradeoffs
+- Canonical `build.rs` copied verbatim vs. a shared `renew-build` helper crate.
+  Chose copy-verbatim-with-a-documented-source-of-truth (the integration guide): a
+  ~25-line stable file does not justify a git `[build-dependencies]` on every fleet CLI.
+  Revisit only if drift recurs despite the guide.
+
+### Open questions
+- None.
+
+### Success criteria — verified (against the real `v1.2.1` release)
+- `otto ci` green in persona-cli.
+- `persona update check` on the `v1.2.1` build → `persona 1.2.1-dirty (latest)`, exit 0.
+- `GIT_DESCRIBE=v1.0.0 cargo build` then `persona update check` → `1.0.0 → 1.2.1
+  available (released 2026-06-15)`, exit 1.
+- `update check` reached its decision with no Okta interaction (early intercept).
+- `persona --version` (`v1.2.1-dirty`) and renew's normalized `1.2.1` refer to the same
+  release.
+
+## Phase 3: shakedown + regression
+
+### Design decisions
+- Redirected `XDG_DATA_HOME` to a writable temp dir when exercising the binary
+  in-sandbox (persona logs under `~/.local/share`, which the harness sandbox does not
+  make writable; unrelated to the feature).
+
+### Deviations / Tradeoffs / Open questions
+- None.
+
+### Success criteria — verified
+- Passive notice is TTY-gated: on an artificially-old (`GIT_DESCRIBE=v1.0.0`) build, a
+  real pty (`script -qefc`) shows `persona: new version 1.2.1 available (currently
+  1.0.0)  → persona update install` on stderr; the same command with stderr redirected
+  to a file produces zero notice lines.
+
+## Fleet integration guide
+
+Added `docs/integration-guide.md` (this repo): the canonical, copy-verbatim recipe
+(`build.rs`, `Cargo.toml`, `cli.rs`, `main.rs` wiring, verification) so every fleet CLI
+integrates identically, with persona as the reference implementation. Linked from
+`README.md`. This is the artifact that makes "all CLIs integrate exactly the same"
+enforceable by convention.
