@@ -2,7 +2,8 @@
 
 **Author:** Scott Idler
 **Date:** 2026-07-05
-**Status:** In Review
+**Status:** Implemented
+**Shipped in:** renew v0.2.0, persona-cli v1.3.0
 **Review Passes Completed:** 5/5
 
 ## Summary
