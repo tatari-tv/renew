@@ -76,6 +76,13 @@ fn main() {
 That's the full integration. `cargo run -- update check` / `update install --yes` /
 `update revert --yes` work out of the box.
 
+> **If your package name isn't your binary name**, override it: `renew!(bin = "mybin")`.
+> The no-arg `renew!()` uses `CARGO_PKG_NAME` as the asset name it downloads
+> (`<name>-vX.Y.Z-<platform>.tar.gz`), so a crate named `marquee-cli` that ships a
+> `marquee` binary must use `renew!(bin = "marquee")` - otherwise it looks for
+> `marquee-cli-v*` assets and fails at runtime (it still compiles and passes CI).
+> Use the same `bin =` override at every call site.
+
 ## Current version source
 
 `renew!()` resolves the running binary's version from **`GIT_DESCRIBE`** — the
@@ -176,6 +183,11 @@ For `renew` to install your binary, your release pipeline must publish:
 
 `<platform>` is one of: `linux-amd64`, `linux-arm64`, `macos-x86_64`, `macos-arm64`.
 
+`<bin>` is the binary/asset name renew looks for: `CARGO_PKG_NAME` with the no-arg
+`renew!()`, or the value you pass to `renew!(bin = "…")` / `Renew::new(repo, bin, …)`.
+It must match the asset base name your release pipeline actually publishes - if the
+crate name and binary name differ, pass `bin` explicitly (see the Quickstart note).
+
 The tarball must contain exactly one regular file (the binary).
 Multi-file tarballs are rejected. The sidecar may use any of the common
 formats: `<hex>`, `<hex>  <name>`, or `<hex> *<name>`.
@@ -237,11 +249,25 @@ that pipe stderr to `/dev/null` will never block on input.
 
 ## Rolling out to a new consumer
 
-1. Add `repository = "https://github.com/owner/repo"` to `Cargo.toml`.
+1. Add `repository = "https://github.com/owner/repo"` to `Cargo.toml` (the repo the
+   releases are published on - the repo root for a monorepo).
 2. Add `renew = { git = "https://github.com/tatari-tv/renew", tag = "v0.1.0" }`.
-3. In `main.rs`: `renew::renew!()?.notify_if_outdated();` near the top.
+3. In `main.rs`, near the top, match-and-degrade on the passive notice - do **not**
+   `?`-propagate it (a construction error would abort every command; see
+   [Handling a construction error](#handling-a-construction-error)):
+   ```rust
+   match renew::renew!() {
+       Ok(r) => r.notify_if_outdated(),
+       Err(e) => log::debug!("renew unavailable: {e}"),
+   }
+   ```
 4. Add `Update(UpdateCmd)` to your CLI enum and dispatch to `cmd.run(&r)`.
-5. Cut a release that includes the changes.
+5. If your package name isn't your binary name, use `renew!(bin = "<binary>")` at
+   every call site (see the Quickstart note).
+6. Cut a release that includes the changes.
+
+For the full copy-paste recipe (canonical `build.rs`, exact `main.rs` wiring, and a
+verification script) follow the [integration guide](docs/integration-guide.md).
 
 ## License
 

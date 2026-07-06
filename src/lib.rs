@@ -37,6 +37,24 @@ macro_rules! __renew_current_version {
     };
 }
 
+/// Construct a [`Renew`] from crate metadata, returning `Result<Renew, Error>`.
+///
+/// The no-arg form reads `CARGO_PKG_REPOSITORY` (the repo to check for releases)
+/// and `CARGO_PKG_NAME` (the binary/asset name to download) plus the current
+/// version from `GIT_DESCRIBE`/`CARGO_PKG_VERSION`:
+///
+/// ```ignore
+/// renew!()                                  // repo + bin from Cargo metadata
+/// renew!(bin = "marquee")                   // override bin: package marquee-cli, binary marquee
+/// renew!(repo = "tatari-tv/marquee")        // override repo
+/// renew!(bin = "marquee", repo = "…")       // override both (either order)
+/// ```
+///
+/// Override `bin` whenever the crate name differs from the shipped binary/asset
+/// name - otherwise renew looks for `<CARGO_PKG_NAME>-vX.Y.Z-<platform>.tar.gz`,
+/// which won't exist (it compiles and passes CI, then fails at runtime). Reach for
+/// [`Renew::new`] directly when you also need to tune the TTL, install path, token,
+/// or timeout.
 #[macro_export]
 macro_rules! renew {
     () => {

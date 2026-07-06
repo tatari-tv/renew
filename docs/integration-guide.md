@@ -101,9 +101,19 @@ renew = { git = "https://github.com/tatari-tv/renew", tag = "vX.Y.Z" }
 ```
 
 `repository` is mandatory: the no-arg `renew!()` reads `CARGO_PKG_REPOSITORY` to know
-which GitHub repo to check. Add renew with `cargo add renew --git … --tag vX.Y.Z`
-(during development against an unmerged renew, a `path`/`branch` dep; repin to the
-tag before release).
+which GitHub repo to check. `<repo>` is the repo the **releases** are published on -
+for a workspace/monorepo that is the repo root (e.g. `tatari-tv/marquee`), NOT a
+per-crate name, since the GitHub Release and its tarballs live at the repo level. Add
+renew with `cargo add renew --git … --tag vX.Y.Z` (during development against an
+unmerged renew, a `path`/`branch` dep; repin to the tag before release).
+
+> **Package name vs binary name.** The no-arg `renew!()` also uses `CARGO_PKG_NAME`
+> as the binary/asset name it looks for (`<name>-vX.Y.Z-<platform>.tar.gz`). If your
+> crate name differs from the shipped binary - e.g. package `marquee-cli` but binary
+> and assets `marquee` - the no-arg macro will look for `marquee-cli-v*` assets and
+> fail at runtime (it still compiles and passes CI). Override it with
+> `renew!(bin = "marquee")` at the call sites in Step 4. Most CLIs name the package
+> after the binary and never hit this; check `[[bin]]` in your `Cargo.toml` if unsure.
 
 ## Step 3 — `src/cli.rs`
 
@@ -172,6 +182,12 @@ Commands::Update(_) => unreachable!("Update is intercepted before <your setup>")
   The passive path must match-and-drop; the `update` path maps `Err` to exit 2.
 - **Intercept `update` before your setup.** `update` needs no config/auth/DB, and a
   user who is (e.g.) logged out must still be able to run `update install`.
+- **Override `bin` when the package name isn't the binary name.** Use
+  `renew!(bin = "<binary>")` at BOTH call sites (the intercept and the passive notice)
+  when `CARGO_PKG_NAME` differs from the shipped binary/asset name - see the callout in
+  Step 2. `marquee-cli` shipping the `marquee` binary is the canonical case:
+  `renew!(bin = "marquee")`. Leave it as the no-arg `renew!()` when they match (the
+  common case; `persona-cli`'s package IS `persona`, so it uses the no-arg form).
 
 ## Step 5 — verify (before you ship)
 
