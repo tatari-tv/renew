@@ -76,27 +76,14 @@ impl UpdateCmd {
                 yes,
                 refresh,
                 install_path,
-            }) => run_install(
-                renew,
-                version.as_deref(),
-                *force,
-                *yes,
-                *refresh,
-                install_path.clone(),
-            ),
-            Some(UpdateSub::Revert { yes, install_path }) => {
-                run_revert(renew, *yes, install_path.clone())
-            }
+            }) => run_install(renew, version.as_deref(), *force, *yes, *refresh, install_path.clone()),
+            Some(UpdateSub::Revert { yes, install_path }) => run_revert(renew, *yes, install_path.clone()),
         }
     }
 }
 
 fn run_check(renew: &Renew, refresh: bool) -> crate::Result<i32> {
-    let update = if refresh {
-        renew.check_latest_refresh()?
-    } else {
-        renew.check_latest()?
-    };
+    let update = if refresh { renew.check_latest_refresh()? } else { renew.check_latest()? };
 
     match update {
         None => {
@@ -133,11 +120,7 @@ fn run_install(
     let target: Version = match version {
         Some(v) => parse_tag(v)?,
         None => {
-            let update = if refresh {
-                renew.check_latest_refresh()?
-            } else {
-                renew.check_latest()?
-            };
+            let update = if refresh { renew.check_latest_refresh()? } else { renew.check_latest()? };
             match update {
                 Some(u) => u.latest,
                 None if force => renew.current.clone(),
@@ -186,10 +169,7 @@ fn run_install(
         renew.install_latest()?
     };
 
-    println!(
-        "{}: installed {} (was {})",
-        renew.bin, result.to, result.from
-    );
+    println!("{}: installed {} (was {})", renew.bin, result.to, result.from);
     Ok(0)
 }
 

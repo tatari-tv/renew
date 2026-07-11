@@ -31,10 +31,7 @@ pub(crate) fn load(cache_dir: &Path) -> Option<CacheEntry> {
     match serde_yaml::from_str(&content) {
         Ok(entry) => Some(entry),
         Err(e) => {
-            log::warn!(
-                "cache parse error at {:?}: {e}; treating as cache miss",
-                path
-            );
+            log::warn!("cache parse error at {:?}: {e}; treating as cache miss", path);
             None
         }
     }
@@ -47,11 +44,7 @@ pub(crate) fn save(cache_dir: &Path, entry: &CacheEntry) -> Result<()> {
     let tmp = cache_dir.join(format!("{CACHE_FILE}.tmp"));
     std::fs::write(&tmp, &yaml).map_err(Error::Io)?;
     std::fs::rename(&tmp, cache_dir.join(CACHE_FILE)).map_err(Error::Io)?;
-    log::debug!(
-        "cache: saved latest={} at={}",
-        entry.latest_version,
-        entry.checked_at
-    );
+    log::debug!("cache: saved latest={} at={}", entry.latest_version, entry.checked_at);
     Ok(())
 }
 

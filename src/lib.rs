@@ -65,18 +65,10 @@ macro_rules! renew {
         )
     };
     (bin = $bin:expr) => {
-        $crate::Renew::new(
-            env!("CARGO_PKG_REPOSITORY"),
-            $bin,
-            $crate::__renew_current_version!(),
-        )
+        $crate::Renew::new(env!("CARGO_PKG_REPOSITORY"), $bin, $crate::__renew_current_version!())
     };
     (repo = $repo:expr) => {
-        $crate::Renew::new(
-            $repo,
-            env!("CARGO_PKG_NAME"),
-            $crate::__renew_current_version!(),
-        )
+        $crate::Renew::new($repo, env!("CARGO_PKG_NAME"), $crate::__renew_current_version!())
     };
     (repo = $repo:expr, bin = $bin:expr) => {
         $crate::Renew::new($repo, $bin, $crate::__renew_current_version!())

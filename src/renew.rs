@@ -71,18 +71,12 @@ pub struct Renew {
 }
 
 impl Renew {
-    pub fn new(
-        repo: impl AsRef<str>,
-        bin: impl AsRef<str>,
-        current: impl AsRef<str>,
-    ) -> Result<Self> {
+    pub fn new(repo: impl AsRef<str>, bin: impl AsRef<str>, current: impl AsRef<str>) -> Result<Self> {
         let repo = RepoSlug::parse(repo.as_ref())?;
         let bin = bin.as_ref().to_string();
         let current = parse_current(current.as_ref())?;
 
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from(".cache"))
-            .join(&bin);
+        let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".cache")).join(&bin);
 
         let data_dir = xdg_data_dir()
             .unwrap_or_else(|| PathBuf::from(".local/share"))
@@ -220,8 +214,7 @@ impl Renew {
         }
 
         let token = self.resolve_token();
-        let result =
-            github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout);
+        let result = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout);
 
         let info = match result {
             Ok(info) => info,
@@ -284,10 +277,7 @@ impl Renew {
                 .parent()
                 .ok_or_else(|| Error::InstallPath {
                     path: path.clone(),
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "install path has no parent",
-                    ),
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "install path has no parent"),
                 })?
                 .to_path_buf();
             let sentinel_name = path
@@ -314,8 +304,7 @@ impl Renew {
         let install_path = self.resolve_install_path()?;
         self.preflight()?;
         let token = self.resolve_token();
-        let info =
-            github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
         install::run(
             &self.repo.as_path(),
             &self.bin,
@@ -337,8 +326,7 @@ impl Renew {
         let install_path = self.resolve_install_path()?;
         self.preflight()?;
         let token = self.resolve_token();
-        let info =
-            github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
         // Verify the requested tag matches what GitHub returned.
         let platform = platform::current_platform()?;
         log::debug!("install_version: platform={}", platform);
