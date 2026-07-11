@@ -2,8 +2,13 @@
 use std::process::Command;
 
 fn main() {
+    // NO `--always`: on a shallow/tagless checkout (exactly how rust-ci.yml checks
+    // out) `--always` emits a bare short SHA, which `version::parse_current` rejects
+    // as non-semver and panics the version tests. Without it, `git describe --tags`
+    // exits non-zero when no tag is reachable, routing into the CARGO_PKG_VERSION
+    // fallback below so GIT_DESCRIBE is always a valid semver string.
     let git_describe = Command::new("git")
-        .args(["describe", "--tags", "--always"])
+        .args(["describe", "--tags"])
         .output()
         .and_then(|output| {
             if output.status.success() {
