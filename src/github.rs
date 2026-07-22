@@ -20,7 +20,15 @@ pub(crate) struct ReleaseInfo {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReleaseAsset {
     pub(crate) name: String,
-    pub(crate) browser_download_url: String,
+    /// GitHub REST API asset URL (`.../repos/OWNER/REPO/releases/assets/{id}`).
+    ///
+    /// We deliberately download via this API URL with `Accept: application/octet-stream`
+    /// rather than the asset's `browser_download_url`. For PRIVATE repos the web
+    /// `browser_download_url` returns 404 even with a valid token (it is a browser-session
+    /// endpoint, not a token-auth one); the API URL authenticates with the token and 302s
+    /// to a presigned download host. For public repos both work, so the API URL is
+    /// strictly more general.
+    pub(crate) url: String,
 }
 
 impl ReleaseInfo {
@@ -75,9 +83,10 @@ pub(crate) fn download_asset(url: &str, token: Option<&str>, dest: &Path, timeou
     log::debug!("download_asset: url={} auth={}", url, token.is_some());
 
     // Use the download agent (RedirectAuthHeaders::Never) to ensure the GitHub
-    // token is never forwarded to the S3 presigned redirect URL.
-    // The initial request to github.com carries the token; on the 302 redirect,
-    // the agent issues the follow-up to S3 without any auth header.
+    // token is never forwarded to the presigned redirect URL.
+    // The initial request to api.github.com carries the token; on the 302 redirect,
+    // the agent issues the follow-up to the presigned release-assets host without
+    // any auth header (that host rejects a stray Authorization header).
     let agent = download_agent(timeout);
 
     let mut req = agent.get(url).header("Accept", "application/octet-stream");
