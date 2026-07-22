@@ -262,36 +262,36 @@ impl Renew {
     }
 
     /// Verify the install path is writable without doing a full install.
+    ///
+    /// Writability is a property of the target's PARENT DIRECTORY, not the target file:
+    /// the replace step ([`install::replace_in_place`] via `self_replace` / atomic rename)
+    /// writes a sibling temp file in the parent and renames it over the target. We therefore
+    /// probe by writing and removing a sentinel in the parent, and NEVER open the target for
+    /// writing. On Linux the target is frequently the running executable, and opening a
+    /// running binary `O_WRONLY` fails with `ETXTBSY` ("text file busy") even though the
+    /// rename-based replace would succeed - so an in-place write probe would spuriously abort
+    /// every in-place self-update.
     pub fn preflight(&self) -> Result<()> {
         let path = self.resolve_install_path()?;
         log::debug!("preflight: path={:?}", path);
-        if path.exists() {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .truncate(false)
-                .open(&path)
-                .map(|_| ())
-                .map_err(|e| Error::InstallPath { path, source: e })
-        } else {
-            let parent = path
-                .parent()
-                .ok_or_else(|| Error::InstallPath {
-                    path: path.clone(),
-                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "install path has no parent"),
-                })?
-                .to_path_buf();
-            let sentinel_name = path
-                .file_name()
-                .map(|n| format!("{}.preflight", n.to_string_lossy()))
-                .unwrap_or_else(|| ".preflight".to_string());
-            let sentinel = parent.join(sentinel_name);
-            std::fs::write(&sentinel, b"").map_err(|e| Error::InstallPath {
+        let parent = path
+            .parent()
+            .ok_or_else(|| Error::InstallPath {
                 path: path.clone(),
-                source: e,
-            })?;
-            let _ = std::fs::remove_file(&sentinel);
-            Ok(())
-        }
+                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "install path has no parent"),
+            })?
+            .to_path_buf();
+        let sentinel_name = path
+            .file_name()
+            .map(|n| format!("{}.preflight", n.to_string_lossy()))
+            .unwrap_or_else(|| ".preflight".to_string());
+        let sentinel = parent.join(sentinel_name);
+        std::fs::write(&sentinel, b"").map_err(|e| Error::InstallPath {
+            path: path.clone(),
+            source: e,
+        })?;
+        let _ = std::fs::remove_file(&sentinel);
+        Ok(())
     }
 
     /// Download, verify, extract, backup, and atomically replace the binary.

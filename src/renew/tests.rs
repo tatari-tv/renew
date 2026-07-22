@@ -91,6 +91,100 @@ fn test_has_backup_false_without_backup_dir() {
 }
 
 #[test]
+fn test_preflight_ok_when_target_absent_but_parent_writable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = make_renew().with_install_path(tmp.path().join("ccu"));
+    assert!(r.preflight().is_ok());
+}
+
+#[test]
+fn test_preflight_ok_when_target_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("ccu");
+    std::fs::write(&target, b"old binary").unwrap();
+    let r = make_renew().with_install_path(target);
+    assert!(r.preflight().is_ok());
+}
+
+#[test]
+fn test_preflight_errors_when_parent_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Parent directory does not exist -> the sentinel write fails -> preflight errors.
+    let r = make_renew().with_install_path(tmp.path().join("no-such-dir").join("ccu"));
+    let err = r.preflight().unwrap_err();
+    assert!(
+        matches!(err, Error::InstallPath { .. }),
+        "expected InstallPath, got {err:?}"
+    );
+}
+
+/// Regression for the Linux self-update `ETXTBSY` bug: preflight probed the target with
+/// `OpenOptions::write(true).open(target)`, which fails with "text file busy" when the target
+/// is the running executable - aborting every in-place self-update on Linux even though the
+/// rename-based replace would succeed. Preflight must now probe the parent dir instead.
+///
+/// We copy a real system binary, execute it, wait until the kernel actually reports the file
+/// as busy (write-open returns `ETXTBSY`), then assert preflight still succeeds. The wait makes
+/// the precondition deterministic (no race on `exec`); on a platform that never returns
+/// `ETXTBSY` the test skips rather than giving a false pass/fail.
+#[cfg(unix)]
+#[test]
+fn test_preflight_ok_when_target_is_running_binary() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists());
+    let Some(sleep) = sleep else {
+        return; // no `sleep` available; nothing to exercise
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("running-bin");
+    std::fs::copy(&sleep, &target).unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut child = std::process::Command::new(&target)
+        .arg("30")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    // Wait until the target is genuinely busy-for-write (exec completed). Bounded so a
+    // platform without ETXTBSY semantics skips instead of hanging or falsely failing.
+    let mut busy = false;
+    for _ in 0..200 {
+        match std::fs::OpenOptions::new().write(true).open(&target) {
+            Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                busy = true;
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+
+    let result = if busy {
+        Some(make_renew().with_install_path(target.clone()).preflight())
+    } else {
+        None
+    };
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // If the precondition never held (platform without ETXTBSY semantics), skip the assert.
+    if let Some(r) = result {
+        assert!(
+            r.is_ok(),
+            "preflight must succeed for a running-binary target (rename-based replace works): {r:?}"
+        );
+    }
+}
+
+#[test]
 fn test_notify_if_outdated_does_not_panic_on_network_error() {
     // check_latest will fail (no real GitHub access, bad repo slug triggers early error)
     // notify_if_outdated must swallow the error silently
