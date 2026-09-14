@@ -5,7 +5,9 @@ use std::path::Path;
 use std::time::Duration;
 use ureq::config::RedirectAuthHeaders;
 
-const GITHUB_API_BASE: &str = "https://api.github.com";
+/// Default GitHub API root. Injectable per-[`crate::Renew`] so the failure paths are
+/// reachable in a test without a network.
+pub(crate) const GITHUB_API_BASE: &str = "https://api.github.com";
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 const MAX_API_BODY_BYTES: u64 = 1024 * 1024;
 
@@ -57,11 +59,21 @@ fn download_agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
-pub(crate) fn latest_release(repo_path: &str, token: Option<&str>, timeout: Duration) -> Result<ReleaseInfo> {
-    log::debug!("latest_release: repo={} auth={}", repo_path, token.is_some());
+pub(crate) fn latest_release(
+    api_base: &str,
+    repo_path: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<ReleaseInfo> {
+    log::debug!(
+        "latest_release: base={} repo={} auth={}",
+        api_base,
+        repo_path,
+        token.is_some()
+    );
 
     let agent = api_agent(timeout);
-    let url = format!("{GITHUB_API_BASE}/repos/{repo_path}/releases/latest");
+    let url = format!("{}/repos/{repo_path}/releases/latest", api_base.trim_end_matches('/'));
 
     let resp = make_api_get(&agent, &url, token);
 

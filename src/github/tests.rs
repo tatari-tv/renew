@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
+use crate::fixture::CannedApi;
 
 #[test]
 fn test_release_info_find_asset_match() {
@@ -66,5 +67,31 @@ fn test_release_info_deserialize() {
         info.assets[0].url.starts_with("https://api.github.com/"),
         "download URL must be the token-authenticating API URL, got {}",
         info.assets[0].url
+    );
+}
+
+/// The API base is a parameter so this path exists at all: with the bare const, a 404 -
+/// what a private repo returns to a token that cannot see it - was unreachable offline.
+#[test]
+fn test_latest_release_maps_404_to_no_release_against_injected_base() {
+    let api = CannedApi::status(404, "Not Found");
+
+    let err = latest_release(api.base(), "tatari-tv/ccu", None, Duration::from_secs(5)).unwrap_err();
+
+    assert!(
+        matches!(err, Error::NoRelease { .. }),
+        "expected NoRelease, got {err:?}"
+    );
+}
+
+#[test]
+fn test_latest_release_maps_429_to_rate_limited_against_injected_base() {
+    let api = CannedApi::status(429, "Too Many Requests");
+
+    let err = latest_release(api.base(), "tatari-tv/ccu", None, Duration::from_secs(5)).unwrap_err();
+
+    assert!(
+        matches!(err, Error::RateLimited { .. }),
+        "expected RateLimited, got {err:?}"
     );
 }

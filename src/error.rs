@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -16,6 +18,19 @@ pub enum Error {
 
     #[error("no release found for {repo}")]
     NoRelease { repo: String },
+
+    /// An update check that did not succeed, whether or not the cache held something.
+    ///
+    /// It exists because reusing the inner error lies: a private-repo 404 arrives here as
+    /// [`Error::NoRelease`], which on its own reads "the repo has no releases" when the
+    /// truth is that the caller's token cannot see it. The cause is named, never renamed.
+    #[error("{}", check_failed_message(.source, .stale))]
+    CheckFailed {
+        /// What the cache knew, when it knew anything: context for the report, never the
+        /// verdict. A check that did not happen cannot say "up to date".
+        stale: Option<StaleCache>,
+        source: Box<Error>,
+    },
 
     #[error("rate limited by GitHub; retry after {retry_after:?}")]
     RateLimited { retry_after: Option<Duration> },
@@ -53,6 +68,31 @@ pub enum Error {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+/// The cache entry a failed check found, rendered as context alongside the failure.
+#[derive(Debug, Clone)]
+pub struct StaleCache {
+    pub latest_version: String,
+    pub checked_at: DateTime<Utc>,
+}
+
+impl fmt::Display for StaleCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "last seen {} (checked at {})",
+            self.latest_version,
+            self.checked_at.to_rfc3339()
+        )
+    }
+}
+
+fn check_failed_message(source: &Error, stale: &Option<StaleCache>) -> String {
+    match stale {
+        None => format!("the check did not succeed and there was no usable cache: {source}"),
+        Some(stale) => format!("the check did not succeed: {source}; from cache, unverified: {stale}"),
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

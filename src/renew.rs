@@ -1,6 +1,6 @@
 use crate::backup;
 use crate::cache;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StaleCache};
 use crate::github;
 use crate::install;
 use crate::platform;
@@ -56,6 +56,16 @@ pub(crate) enum TokenSource {
     Explicit(Option<String>),
 }
 
+/// Why a refresh fell through to the cache.
+///
+/// The distinction is the whole point: a peer holding the refresh lock means a check IS
+/// happening, so the cache may still report. Anything else means no check happened, and
+/// a cache entry can only add context to the failure.
+enum Fallback {
+    LockHeld,
+    Failed(Error),
+}
+
 #[derive(Debug, Clone)]
 pub struct Renew {
     pub(crate) repo: RepoSlug,
@@ -68,6 +78,9 @@ pub struct Renew {
     pub(crate) token: TokenSource,
     pub(crate) network_timeout: Duration,
     pub(crate) download_timeout: Duration,
+    /// GitHub API root. Defaults to the public one; injectable so every failure path
+    /// this type owns is reachable in a test without a network.
+    pub(crate) api_base: String,
 }
 
 impl Renew {
@@ -93,6 +106,7 @@ impl Renew {
             token: TokenSource::EnvAuto,
             network_timeout: Duration::from_secs(DEFAULT_NETWORK_TIMEOUT_SECS),
             download_timeout: Duration::from_secs(DEFAULT_DOWNLOAD_TIMEOUT_SECS),
+            api_base: github::GITHUB_API_BASE.to_string(),
         })
     }
 
@@ -155,13 +169,13 @@ impl Renew {
             log::debug!("check_latest: cache stale, refreshing");
         }
 
-        self.refresh_and_compare(false)
+        self.refresh_and_compare()
     }
 
     /// Force a network call, bypassing the cache. Still updates the cache afterward.
     pub fn check_latest_refresh(&self) -> Result<Option<Update>> {
         log::debug!("check_latest_refresh: {}", self.repo.as_path());
-        self.refresh_and_compare(true)
+        self.refresh_and_compare()
     }
 
     fn compare_cached(&self, latest_str: &str) -> Result<Option<Update>> {
@@ -179,13 +193,14 @@ impl Renew {
         }
     }
 
-    fn refresh_and_compare(&self, force: bool) -> Result<Option<Update>> {
+    fn refresh_and_compare(&self) -> Result<Option<Update>> {
         let lock_path = cache::lock_path(&self.cache_dir);
         let _ = std::fs::create_dir_all(&self.cache_dir);
 
         // Acquire a non-blocking exclusive lock to serialize network calls.
         // If the lock is held (another process is refreshing), fall through to
         // whatever is in the cache (possibly stale) rather than blocking.
+        // Every other outcome here means no check happened, which is an error.
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -195,32 +210,37 @@ impl Renew {
         let lock_file = match lock_file {
             Ok(f) => f,
             Err(e) => {
-                log::warn!("cache: could not open lock file: {e}; falling through to cache");
-                return self.fallback_to_cache();
+                log::warn!("cache: could not open lock file: {e}; the check cannot run");
+                return self.fallback_to_cache(Fallback::Failed(Error::Io(e)));
             }
         };
 
         // try_lock is available on File in Rust 1.89+
         match lock_file.try_lock() {
             Ok(()) => {}
-            Err(_) if !force => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 log::debug!("check_latest: lock held by another process, using existing cache");
-                return self.fallback_to_cache();
+                return self.fallback_to_cache(Fallback::LockHeld);
             }
-            Err(e) => {
-                log::warn!("check_latest: could not acquire lock: {e}; using existing cache");
-                return self.fallback_to_cache();
+            Err(std::fs::TryLockError::Error(e)) => {
+                log::warn!("check_latest: could not acquire lock: {e}; the check cannot run");
+                return self.fallback_to_cache(Fallback::Failed(Error::Io(e)));
             }
         }
 
         let token = self.resolve_token();
-        let result = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout);
+        let result = github::latest_release(
+            &self.api_base,
+            &self.repo.as_path(),
+            token.as_deref(),
+            self.network_timeout,
+        );
 
         let info = match result {
             Ok(info) => info,
             Err(e) => {
-                log::warn!("check_latest: network error: {e}; falling back to cache");
-                return self.fallback_to_cache().or(Err(e));
+                log::warn!("check_latest: network error: {e}; the check did not succeed");
+                return self.fallback_to_cache(Fallback::Failed(e));
             }
         };
 
@@ -254,10 +274,30 @@ impl Renew {
         }
     }
 
-    fn fallback_to_cache(&self) -> Result<Option<Update>> {
-        match cache::load(&self.cache_dir) {
-            Some(cached) => self.compare_cached(&cached.latest_version),
-            None => Ok(None),
+    /// Handle a refresh that did not reach the network, per [`Fallback`].
+    ///
+    /// Never `Ok(None)`: reporting "up to date" from a check that did not happen is the
+    /// defect this function exists to prevent, and all four of its callers shared it.
+    fn fallback_to_cache(&self, why: Fallback) -> Result<Option<Update>> {
+        let cached = cache::load(&self.cache_dir);
+        match why {
+            Fallback::LockHeld => match cached {
+                Some(cached) => self.compare_cached(&cached.latest_version),
+                None => Err(Error::CheckFailed {
+                    stale: None,
+                    source: Box::new(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "another process is refreshing the update cache",
+                    ))),
+                }),
+            },
+            Fallback::Failed(cause) => Err(Error::CheckFailed {
+                stale: cached.map(|c| StaleCache {
+                    latest_version: c.latest_version,
+                    checked_at: c.checked_at,
+                }),
+                source: Box::new(cause),
+            }),
         }
     }
 
@@ -304,7 +344,12 @@ impl Renew {
         let install_path = self.resolve_install_path()?;
         self.preflight()?;
         let token = self.resolve_token();
-        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        let info = github::latest_release(
+            &self.api_base,
+            &self.repo.as_path(),
+            token.as_deref(),
+            self.network_timeout,
+        )?;
         install::run(
             &self.repo.as_path(),
             &self.bin,
@@ -326,7 +371,12 @@ impl Renew {
         let install_path = self.resolve_install_path()?;
         self.preflight()?;
         let token = self.resolve_token();
-        let info = github::latest_release(&self.repo.as_path(), token.as_deref(), self.network_timeout)?;
+        let info = github::latest_release(
+            &self.api_base,
+            &self.repo.as_path(),
+            token.as_deref(),
+            self.network_timeout,
+        )?;
         // Verify the requested tag matches what GitHub returned.
         let platform = platform::current_platform()?;
         log::debug!("install_version: platform={}", platform);

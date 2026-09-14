@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
+use crate::fixture::{CannedApi, hold_refresh_lock, offline_renew, seed_cache};
 
 fn make_renew() -> Renew {
     Renew::new("tatari-tv/ccu", "ccu", "0.4.3").unwrap()
@@ -184,23 +185,132 @@ fn test_preflight_ok_when_target_is_running_binary() {
     }
 }
 
+/// The passive notice must keep swallowing a failed check, because it rides on commands
+/// the user actually ran. `RENEW_FORCE_NOTIFY` bypasses the TTY gate so the swallow is
+/// exercised rather than skipped under `cargo test`.
 #[test]
-fn test_notify_if_outdated_does_not_panic_on_network_error() {
-    // check_latest will fail (no real GitHub access, bad repo slug triggers early error)
-    // notify_if_outdated must swallow the error silently
-    let r = make_renew();
-    // This should not panic regardless of network state
+fn test_notify_if_outdated_swallows_a_failed_check() {
+    let guard = ENV_LOCK.lock().unwrap();
+    let prior = std::env::var(FORCE_NOTIFY_ENV).ok();
+    unsafe { std::env::set_var(FORCE_NOTIFY_ENV, "1") };
+
+    let api = CannedApi::status(404, "Not Found");
+    let tmp = tempfile::tempdir().unwrap();
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+    assert!(r.check_latest().is_err(), "precondition: the check must fail");
+
     r.notify_if_outdated();
+
+    match prior {
+        Some(v) => unsafe { std::env::set_var(FORCE_NOTIFY_ENV, v) },
+        None => unsafe { std::env::remove_var(FORCE_NOTIFY_ENV) },
+    }
+    drop(guard);
 }
 
+/// The check failed and there was nothing cached, so there is nothing to report. The old
+/// body bound the result and asserted nothing, which let `Ok(None)` - "you are up to
+/// date", from a check that never happened - through for the life of the crate.
 #[test]
 fn test_check_latest_returns_error_without_network() {
-    // With a zero TTL and no network, check_latest should return an error or Ok(None).
-    // We just verify it doesn't panic.
-    let r = make_renew().with_cache_ttl(Duration::from_secs(0));
+    let api = CannedApi::status(404, "Not Found");
+    let tmp = tempfile::tempdir().unwrap();
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
     let result = r.check_latest();
-    // Either Ok (stale-cache fallback) or Err (network failure) - both are valid
-    let _ = result;
+
+    assert!(
+        matches!(&result, Err(Error::CheckFailed { stale: None, .. })),
+        "a failed check must not report success: {result:?}"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.starts_with("the check did not succeed and there was no usable cache"),
+        "message must name what happened: {msg}"
+    );
+    assert!(
+        msg.contains("no release found for tatari-tv/ccu"),
+        "message must name the cause it wraps: {msg}"
+    );
+}
+
+/// A private-repo 404 is the reason the variant exists: on its own it renders as "no
+/// release found for <repo>", which tells the user the repo has no releases when the
+/// truth is that their token cannot see it.
+#[test]
+fn test_failed_check_does_not_render_as_a_bare_no_release() {
+    let api = CannedApi::status(404, "Not Found");
+    let tmp = tempfile::tempdir().unwrap();
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
+    let msg = r.check_latest().unwrap_err().to_string();
+
+    assert!(
+        !msg.starts_with("no release found"),
+        "a failed check must not masquerade as an empty repo: {msg}"
+    );
+}
+
+/// A stale cache can inform, never vote: the value and its `checked-at` ride along as
+/// context and the call still fails, because the check did not happen.
+#[test]
+fn test_failed_check_with_cache_still_errors_and_carries_the_cache_as_context() {
+    let api = CannedApi::status(500, "Internal Server Error");
+    let tmp = tempfile::tempdir().unwrap();
+    seed_cache(tmp.path(), "9.9.9", Duration::from_secs(48 * 60 * 60));
+    let r = offline_renew(&api, tmp.path());
+
+    let result = r.check_latest();
+
+    assert!(
+        matches!(&result, Err(Error::CheckFailed { stale: Some(_), .. })),
+        "a cached value is context, not a verdict: {result:?}"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("9.9.9"), "cached value must print as context: {msg}");
+    assert!(msg.contains("checked at"), "cached checked-at must print: {msg}");
+}
+
+/// A peer holding the refresh lock means a check IS happening, so the cache still
+/// reports. This is the one fallthrough that is not a failure.
+#[test]
+fn test_lock_held_by_peer_still_reports_from_cache() {
+    let api = CannedApi::status(500, "Internal Server Error");
+    let tmp = tempfile::tempdir().unwrap();
+    seed_cache(tmp.path(), "9.9.9", Duration::from_secs(0));
+    let lock = hold_refresh_lock(tmp.path());
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
+    let update = r
+        .check_latest()
+        .unwrap()
+        .expect("cache should report while a peer refreshes");
+
+    assert_eq!(update.latest.to_string(), "9.9.9");
+    drop(lock);
+}
+
+/// Same fallthrough with nothing cached: there is no report to make, so it is an error
+/// rather than a silent "up to date".
+#[test]
+fn test_lock_held_by_peer_with_empty_cache_is_an_error() {
+    let api = CannedApi::status(500, "Internal Server Error");
+    let tmp = tempfile::tempdir().unwrap();
+    let lock = hold_refresh_lock(tmp.path());
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
+    let result = r.check_latest();
+
+    assert!(
+        matches!(&result, Err(Error::CheckFailed { stale: None, .. })),
+        "nothing to report is an error, not success: {result:?}"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("refreshing the update cache"),
+        "message must name the cause: {msg}"
+    );
+    drop(lock);
 }
 
 // Serialize env-var-touching tests to prevent parallel races (see rust conventions).

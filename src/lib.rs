@@ -6,6 +6,8 @@ mod backup;
 mod cache;
 mod cmd;
 mod error;
+#[cfg(test)]
+mod fixture;
 mod github;
 mod install;
 mod platform;
@@ -14,7 +16,7 @@ mod repo;
 mod version;
 
 pub use cmd::UpdateCmd;
-pub use error::{Error, Result};
+pub use error::{Error, Result, StaleCache};
 pub use renew::Renew;
 pub use version::{InstalledVersion, Update};
 
