@@ -11,16 +11,17 @@ use std::path::PathBuf;
 pub struct UpdateCmd {
     #[command(subcommand)]
     cmd: Option<UpdateSub>,
+    /// Bypass the cache and force a network call. One flag, usable before or after the
+    /// subcommand (`update --refresh` or `update check --refresh`): two copies at
+    /// different scopes would be two signals with one meaning.
+    #[arg(long, global = true)]
+    refresh: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum UpdateSub {
     /// Check whether an update is available (exit 0 = current, 1 = update available, 2 = error).
-    Check {
-        /// Bypass the cache and force a network call.
-        #[arg(long)]
-        refresh: bool,
-    },
+    Check,
     /// Install a specific version (defaults to latest).
     Install {
         /// Specific version to install (e.g. 0.5.0). Defaults to latest.
@@ -31,9 +32,6 @@ enum UpdateSub {
         /// Skip the confirmation prompt.
         #[arg(long)]
         yes: bool,
-        /// Bypass the cache when resolving latest.
-        #[arg(long)]
-        refresh: bool,
         /// Override the install path (default: current executable).
         #[arg(long)]
         install_path: Option<PathBuf>,
@@ -68,15 +66,13 @@ impl UpdateCmd {
 
     fn run_inner(&self, renew: &Renew) -> crate::Result<i32> {
         match &self.cmd {
-            None | Some(UpdateSub::Check { refresh: false }) => run_check(renew, false),
-            Some(UpdateSub::Check { refresh: true }) => run_check(renew, true),
+            None | Some(UpdateSub::Check) => run_check(renew, self.refresh),
             Some(UpdateSub::Install {
                 version,
                 force,
                 yes,
-                refresh,
                 install_path,
-            }) => run_install(renew, version.as_deref(), *force, *yes, *refresh, install_path.clone()),
+            }) => run_install(renew, version.as_deref(), *force, *yes, install_path.clone()),
             Some(UpdateSub::Revert { yes, install_path }) => run_revert(renew, *yes, install_path.clone()),
         }
     }
@@ -115,7 +111,6 @@ fn run_install(
     version: Option<&str>,
     force: bool,
     yes: bool,
-    refresh: bool,
     install_path: Option<PathBuf>,
 ) -> crate::Result<i32> {
     let renew = match install_path {
@@ -127,7 +122,10 @@ fn run_install(
     let target: Version = match version {
         Some(v) => parse_tag(v)?,
         None => {
-            let update = if refresh { renew.check_latest_refresh()? } else { renew.check_latest()? };
+            // No explicit version: always refresh. A cached (possibly stale) value here
+            // would let the confirm prompt name a version that is no longer latest, and
+            // could demand --force against a comparison that was never current.
+            let update = renew.check_latest_refresh()?;
             match update {
                 Some(u) => u.latest,
                 None if force => renew.current.clone(),

@@ -3,6 +3,7 @@
 use super::*;
 use crate::fixture::{CannedApi, offline_renew, seed_cache, seed_cache_with, seed_legacy_cache};
 use chrono::{TimeZone, Utc};
+use clap::Parser;
 use std::time::Duration;
 
 fn make_renew() -> Renew {
@@ -32,7 +33,8 @@ fn test_run_check_exits_2_when_the_check_fails() {
 
     for refresh in [false, true] {
         let cmd = UpdateCmd {
-            cmd: Some(UpdateSub::Check { refresh }),
+            cmd: Some(UpdateSub::Check),
+            refresh,
         };
         assert_eq!(cmd.run(&renew), 2, "failed check with refresh={refresh} must exit 2");
     }
@@ -62,25 +64,65 @@ fn test_failed_check_message_names_the_failure() {
     );
 }
 
-/// When already current and force=false, exit 0 without prompting or installing. A fresh
-/// cache entry naming the current version is a check that DID happen, recently, so this
-/// is the one path that still reports from cache alone.
+/// When already current and force=false, exit 0 without prompting or installing. Install
+/// with no explicit version always refreshes now (Phase 3), so a fresh, current-matching
+/// TAG from the network - not a cached entry - is what makes this a no-op: the cache is
+/// never consulted for the no-version install path.
 #[test]
 fn test_run_install_already_current_without_force_exits_0() {
-    let api = CannedApi::status(500, "Internal Server Error");
+    let body = r#"{
+        "tag_name": "v0.4.3",
+        "html_url": "https://github.com/tatari-tv/ccu/releases/tag/v0.4.3",
+        "published_at": "2024-01-01T00:00:00Z",
+        "assets": []
+    }"#;
+    let api = CannedApi::json(200, "OK", body);
     let tmp = tempfile::tempdir().unwrap();
-    seed_cache(tmp.path(), "0.4.3", Duration::from_secs(0));
     let renew = offline_renew(&api, tmp.path());
     let cmd = UpdateCmd {
         cmd: Some(UpdateSub::Install {
             version: None,
             force: false,
             yes: true,
-            refresh: false,
             install_path: None,
         }),
+        refresh: false,
     };
     assert_eq!(cmd.run(&renew), 0);
+}
+
+/// Install with no explicit version and a STALE cache entry: the old behavior only fed
+/// the equality gate and prompt text from cache, but resolved the target from a fresh
+/// network call anyway. Now the whole check is fresh - a stale cache naming a version
+/// that is no longer latest must not survive into the equality gate or the prompt.
+#[test]
+fn test_run_install_no_version_always_refreshes_past_a_stale_cache() {
+    let body = r#"{
+        "tag_name": "v0.4.3",
+        "html_url": "https://github.com/tatari-tv/ccu/releases/tag/v0.4.3",
+        "published_at": "2024-01-01T00:00:00Z",
+        "assets": []
+    }"#;
+    let api = CannedApi::json(200, "OK", body);
+    let tmp = tempfile::tempdir().unwrap();
+    // A cache entry naming a DIFFERENT, higher version, still within TTL. If install
+    // consulted the cache it would target 9.9.9 rather than the network's 0.4.3.
+    seed_cache(tmp.path(), "9.9.9", Duration::from_secs(0));
+    let renew = offline_renew(&api, tmp.path());
+    let cmd = UpdateCmd {
+        cmd: Some(UpdateSub::Install {
+            version: None,
+            force: false,
+            yes: true,
+            install_path: None,
+        }),
+        refresh: false,
+    };
+    assert_eq!(
+        cmd.run(&renew),
+        0,
+        "must resolve target from the refreshing check, not the stale cache"
+    );
 }
 
 #[test]
@@ -92,6 +134,7 @@ fn test_run_revert_no_backup_exits_2() {
             yes: true,
             install_path: None,
         }),
+        refresh: false,
     };
     // No backup exists, so revert should exit 2 with "no backup available"
     assert_eq!(cmd.run(&renew), 2);
@@ -149,12 +192,72 @@ fn test_update_cmd_none_subcommand_acts_as_check() {
     let tmp = tempfile::tempdir().unwrap();
     let renew = offline_renew(&api, tmp.path());
 
-    let bare = UpdateCmd { cmd: None }.run(&renew);
+    let bare = UpdateCmd {
+        cmd: None,
+        refresh: false,
+    }
+    .run(&renew);
     let explicit = UpdateCmd {
-        cmd: Some(UpdateSub::Check { refresh: false }),
+        cmd: Some(UpdateSub::Check),
+        refresh: false,
     }
     .run(&renew);
 
     assert_eq!(bare, explicit);
     assert_eq!(bare, 2, "a failed check exits 2 in either spelling");
+}
+
+/// renew ships no binary, so a consumer's top-level command is stood in with a minimal
+/// `Parser` wrapping `UpdateCmd` as its `update` subcommand - the same shape any real
+/// consumer CLI uses. This drives real clap argv parsing rather than a hand-built struct
+/// literal, which matters here specifically: a hand-built `UpdateCmd { refresh: true,
+/// .. }` cannot prove the `global = true` declaration actually makes `--refresh` legal
+/// AFTER the `check` token, only that the field exists.
+#[derive(clap::Parser)]
+struct TestCli {
+    #[command(subcommand)]
+    top: TestTop,
+}
+
+#[derive(clap::Subcommand)]
+enum TestTop {
+    Update(UpdateCmd),
+}
+
+fn parse_update(args: &[&str]) -> UpdateCmd {
+    let argv = std::iter::once("bin").chain(args.iter().copied());
+    let TestTop::Update(cmd) = TestCli::try_parse_from(argv).unwrap().top;
+    cmd
+}
+
+/// `<bin> update --refresh` and `<bin> update check --refresh` must BOTH parse and BOTH
+/// take the refreshing path, against the INJECTED fixture API, never live GitHub. Proof
+/// that `--refresh` reached the network path (not merely that it parsed): the cache
+/// carries a fresh, TTL-live entry naming a HIGHER version, so without `--refresh` the
+/// check reports it straight from cache (exit 1, no network touched); `--refresh` must
+/// force past that cache to the injected API, which is wired to fail here, flipping the
+/// exit code to 2. A parse-only bug (flag accepted but never read) would still exit 1.
+#[test]
+fn test_refresh_flag_parses_and_forces_the_network_path_at_both_scopes() {
+    let api = CannedApi::status(404, "Not Found");
+    let tmp = tempfile::tempdir().unwrap();
+    seed_cache(tmp.path(), "9.9.9", Duration::from_secs(0));
+    let renew = offline_renew(&api, tmp.path());
+
+    let no_refresh = parse_update(&["update"]);
+    assert_eq!(
+        no_refresh.run(&renew),
+        1,
+        "no --refresh: the fresh cache hit must report the update without touching the network"
+    );
+
+    let cases: [&[&str]; 2] = [&["update", "--refresh"], &["update", "check", "--refresh"]];
+    for args in cases {
+        let cmd = parse_update(args);
+        assert_eq!(
+            cmd.run(&renew),
+            2,
+            "{args:?}: --refresh must force past the cache to the (failing) injected API"
+        );
+    }
 }

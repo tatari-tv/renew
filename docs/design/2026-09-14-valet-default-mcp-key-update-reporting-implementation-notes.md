@@ -159,3 +159,81 @@ Design doc: `slack-cli docs/design/2026-09-14-valet-default-mcp-key-update-repor
 ### Open questions
 
 - None.
+
+## Phase 3 (W3): Refresh escape and install freshness
+
+### Design decisions
+
+- `--refresh` is now one field, `#[arg(long, global = true)] refresh: bool` on
+  `UpdateCmd` itself (`src/cmd.rs`), not on `UpdateSub::Check` or `UpdateSub::Install`.
+  `UpdateSub::Check` is now a unit variant; `UpdateSub::Install` lost its `refresh` field.
+  `run_inner` reads `self.refresh` for the `None | Check` arm; `Install` no longer reads
+  it at all (see Deviations).
+- Confirmed the seam Phase 1 handed forward, against the code as committed: refresh vs
+  no-refresh lives entirely in `Renew::check_latest` vs `Renew::check_latest_refresh`
+  (`src/renew.rs`), and `refresh_and_compare` takes no `force`/`refresh` parameter. Wiring
+  the global flag to `self.refresh` choosing between those two methods in `run_check`
+  needed no change to `src/renew.rs`.
+- Install with no explicit version now unconditionally calls `renew.check_latest_refresh()`
+  (`src/cmd.rs:run_install`), never `check_latest()`. This is the fix for "the confirm
+  prompt can name a stale version and `--force` can be demanded spuriously": the cache is
+  no longer consulted at all on that path, so a stale-but-TTL-fresh entry cannot leak into
+  either the equality gate or the prompt text.
+- Criterion 1 ("both parse and both take the refreshing path... never against live
+  GitHub") is asserted through REAL clap argv parsing, not a hand-built `UpdateCmd { .. }`
+  literal: since renew ships no binary, `src/cmd/tests.rs` declares a test-only
+  `#[derive(clap::Parser)] TestCli { #[command(subcommand)] top: TestTop }` /
+  `enum TestTop { Update(UpdateCmd) }`, the same nesting shape any real consumer CLI uses,
+  and drives it via `TestCli::try_parse_from(["bin", "update", ...])`. A struct literal
+  would only prove the field exists, not that `global = true` actually makes `--refresh`
+  legal after the `check` token.
+- That same test proves the flag reaches the network path, not merely that it parses: it
+  seeds a fresh, TTL-live cache entry naming a HIGHER version against a `CannedApi` wired
+  to 404. Without `--refresh` the cache hit reports the update (exit 1, no network
+  touched); with `--refresh`, at both `update --refresh` and `update check --refresh`,
+  the flag must force past the cache to the failing injected API (exit 2). A
+  parse-accepted-but-never-read bug would still exit 1, so the exit-code flip is the
+  actual assertion, not the successful parse alone.
+- Criterion 2 ("a test asserts the no-version install path calls the refreshing check") is
+  `test_run_install_no_version_always_refreshes_past_a_stale_cache`: it seeds a cache
+  entry naming a version the injected API does NOT return, so the test only passes 0 if
+  the target was resolved from the (refreshing) network call rather than from the stale
+  cache entry.
+
+### Deviations
+
+- `run_install`'s `refresh: bool` parameter is deleted outright rather than kept and
+  ignored: once the no-version arm always calls `check_latest_refresh()`, the parameter
+  decided nothing and `deny(unused_variables)` / `deny(dead_code)` would have rejected a
+  dead binding. Same effect as "install always refreshes," correct seam: the flag simply
+  never reaches `run_install` at all now, rather than reaching it and being discarded.
+- `--refresh` remains syntactically legal on `install` and `revert` (clap's
+  `global = true` propagates to every subcommand of `UpdateCmd`, not just `check`), even
+  though `run_install`/`run_revert` never read it. The design doc's own phrasing
+  ("usable at either level") describes container-vs-`check`, not a restriction to
+  `check` alone; narrowing acceptance to specific subcommands would need a custom clap
+  validator this phase does not add, and a no-op flag being accepted is not the defect
+  this doc is about (unlike the two flags this phase deletes, it cannot make Install
+  demand `--force` spuriously or misreport a version, since Install now always refreshes
+  regardless of whether the caller also typed `--refresh`).
+- `test_run_install_already_current_without_force_exits_0` (Phase 1) is rewritten from a
+  seeded-cache assertion to a `CannedApi::json` 200 response naming the current version:
+  since install with no version no longer consults the cache at all, the old fixture no
+  longer exercises the path the test's name claims.
+
+### Tradeoffs
+
+- A test-local `TestCli`/`TestTop` wrapper vs asserting only on `UpdateCmd` field values
+  after a hand-built literal: the wrapper costs ~15 lines and a `clap::Parser` import
+  local to the test module, in exchange for actually exercising clap's argv parser (the
+  thing criterion 1 says "parses") rather than assuming the derive attributes behave as
+  named.
+- Proving "takes the refreshing path" via an exit-code flip (cache-hit 1 vs
+  forced-network-failure 2) vs instrumenting `Renew` with a call counter: the exit-code
+  approach needed no test-only observability added to `Renew`/`Fallback`, at the cost of
+  the test's intent depending on a comment to explain why 1-vs-2 is the load-bearing
+  signal rather than the flag simply being present.
+
+### Open questions
+
+- None.
