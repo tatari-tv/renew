@@ -271,6 +271,33 @@ fn test_failed_check_with_cache_still_errors_and_carries_the_cache_as_context() 
     assert!(msg.contains("checked at"), "cached checked-at must print: {msg}");
 }
 
+/// The network path's own fabrication: an unparseable release timestamp must fail
+/// honestly rather than silently become "today". `src/renew.rs` used to do exactly that
+/// via `info.published_at.parse().unwrap_or(Utc::now())`.
+#[test]
+fn test_network_path_does_not_fabricate_an_unparseable_release_date() {
+    let body = r#"{
+        "tag_name": "v9.9.9",
+        "html_url": "https://github.com/tatari-tv/ccu/releases/tag/v9.9.9",
+        "published_at": "not-a-date",
+        "assets": []
+    }"#;
+    let api = CannedApi::json(200, "OK", body);
+    let tmp = tempfile::tempdir().unwrap();
+    let r = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
+    let result = r.check_latest();
+
+    assert!(
+        matches!(&result, Err(Error::InvalidPublishedAt { .. })),
+        "an unparseable release date must be a named error, not Utc::now(): {result:?}"
+    );
+    assert!(
+        cache::load(tmp.path()).is_none(),
+        "bad data must not be cached, so a later working check is not corrupted"
+    );
+}
+
 /// A peer holding the refresh lock means a check IS happening, so the cache still
 /// reports. This is the one fallthrough that is not a failure.
 #[test]

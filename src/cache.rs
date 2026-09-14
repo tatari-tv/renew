@@ -4,14 +4,22 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const CACHE_FILE: &str = "check.yml";
+pub(crate) const CACHE_FILE: &str = "check.yml";
 const LOCK_FILE: &str = "refresh.lock";
 
+/// `published_at`/`release_url` are `Option` so a pre-schema-bump entry (every cache file
+/// in the fleet today) deserializes without error - missing keys become `None` for an
+/// `Option` field, and no `skip_serializing_if` keeps a fresh `None` serializing as an
+/// explicit `null` rather than an omitted key. `None` on EITHER field means the entry
+/// cannot back a report and must be treated as a cache miss, which makes the bump
+/// self-healing: the first check after upgrading refreshes and writes both fields.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CacheEntry {
     pub(crate) latest_version: String,
     pub(crate) checked_at: DateTime<Utc>,
+    pub(crate) published_at: Option<DateTime<Utc>>,
+    pub(crate) release_url: Option<String>,
 }
 
 impl CacheEntry {

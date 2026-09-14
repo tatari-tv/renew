@@ -6,7 +6,7 @@ use crate::install;
 use crate::platform;
 use crate::repo::RepoSlug;
 use crate::version::{InstalledVersion, Update, parse_current, parse_tag};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use semver::Version;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -163,10 +163,14 @@ impl Renew {
 
         if let Some(cached) = cache::load(&self.cache_dir) {
             if cached.is_fresh(self.cache_ttl) {
-                log::debug!("check_latest: cache hit, latest={}", cached.latest_version);
-                return self.compare_cached(&cached.latest_version);
+                if let Some(result) = self.compare_cached(&cached) {
+                    log::debug!("check_latest: cache hit, latest={}", cached.latest_version);
+                    return result;
+                }
+                log::debug!("check_latest: cache hit but pre-schema-bump entry, refreshing to self-heal");
+            } else {
+                log::debug!("check_latest: cache stale, refreshing");
             }
-            log::debug!("check_latest: cache stale, refreshing");
         }
 
         self.refresh_and_compare()
@@ -178,19 +182,26 @@ impl Renew {
         self.refresh_and_compare()
     }
 
-    fn compare_cached(&self, latest_str: &str) -> Result<Option<Update>> {
-        let latest = parse_tag(latest_str)?;
-        if latest > self.current {
-            Ok(Some(Update {
+    /// Compare a cache entry against `current`, using ONLY data the entry actually
+    /// carries. Returns `None`, rather than a partial `Update`, when the entry predates
+    /// the `published-at`/`release-url` schema bump (or is otherwise missing either
+    /// field): a caller treats that exactly like "no cache" rather than rendering a
+    /// report with data it does not have. This replaces the placeholder epoch timestamp
+    /// and empty URL this function used to fabricate for every cache-hit `Update`.
+    fn compare_cached(&self, entry: &cache::CacheEntry) -> Option<Result<Option<Update>>> {
+        let published_at = entry.published_at?;
+        let release_url = entry.release_url.clone()?;
+        Some(match parse_tag(&entry.latest_version) {
+            Ok(latest) if latest > self.current => Ok(Some(Update {
                 current: self.current.clone(),
                 latest: latest.clone(),
                 tag: format!("v{latest}"),
-                release_url: String::new(),
-                published_at: chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH),
-            }))
-        } else {
-            Ok(None)
-        }
+                release_url,
+                published_at,
+            })),
+            Ok(_) => Ok(None),
+            Err(e) => Err(e),
+        })
     }
 
     fn refresh_and_compare(&self) -> Result<Option<Update>> {
@@ -252,16 +263,34 @@ impl Renew {
             }
         };
 
+        // Fail rather than fabricate: `Update`/`CacheEntry` both need an honest date, and
+        // this used to silently default an unparseable GitHub timestamp to right now,
+        // for both the report and the cache entry it seeds.
+        let published_at: DateTime<Utc> = match info.published_at.parse() {
+            Ok(dt) => dt,
+            Err(source) => {
+                log::warn!(
+                    "check_latest: unparseable release date {:?}: {source}",
+                    info.published_at
+                );
+                return Err(Error::InvalidPublishedAt {
+                    value: info.published_at.clone(),
+                    source,
+                });
+            }
+        };
+
         let entry = cache::CacheEntry {
             latest_version: latest.to_string(),
             checked_at: Utc::now(),
+            published_at: Some(published_at),
+            release_url: Some(info.html_url.clone()),
         };
         if let Err(e) = cache::save(&self.cache_dir, &entry) {
             log::warn!("check_latest: could not save cache: {e}");
         }
 
         if latest > self.current {
-            let published_at = info.published_at.parse().unwrap_or(Utc::now());
             Ok(Some(Update {
                 current: self.current.clone(),
                 latest,
@@ -281,8 +310,11 @@ impl Renew {
     fn fallback_to_cache(&self, why: Fallback) -> Result<Option<Update>> {
         let cached = cache::load(&self.cache_dir);
         match why {
-            Fallback::LockHeld => match cached {
-                Some(cached) => self.compare_cached(&cached.latest_version),
+            // A pre-schema-bump entry is NOT usable for a report (no `published_at`/
+            // `release_url`), so `compare_cached` returning `None` falls into the same
+            // "nothing to report" arm as no cache file at all.
+            Fallback::LockHeld => match cached.as_ref().and_then(|c| self.compare_cached(c)) {
+                Some(result) => result,
                 None => Err(Error::CheckFailed {
                     stale: None,
                     source: Box::new(Error::Io(std::io::Error::new(

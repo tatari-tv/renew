@@ -1,7 +1,8 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use crate::fixture::{CannedApi, offline_renew, seed_cache};
+use crate::fixture::{CannedApi, offline_renew, seed_cache, seed_cache_with, seed_legacy_cache};
+use chrono::{TimeZone, Utc};
 use std::time::Duration;
 
 fn make_renew() -> Renew {
@@ -94,6 +95,50 @@ fn test_run_revert_no_backup_exits_2() {
     };
     // No backup exists, so revert should exit 2 with "no backup available"
     assert_eq!(cmd.run(&renew), 2);
+}
+
+/// A cache entry carries a KNOWN `published-at`; the rendered report line must carry
+/// exactly that date, not `1970-01-01` (the `UNIX_EPOCH` this used to fabricate). Runs
+/// through the real `check_latest` -> `compare_cached` -> `render_check` path.
+#[test]
+fn test_run_check_reports_the_cached_release_date_not_a_fabricated_one() {
+    let api = CannedApi::status(500, "Internal Server Error"); // fresh cache hit, no network needed
+    let tmp = tempfile::tempdir().unwrap();
+    let published_at = Utc.with_ymd_and_hms(2024, 3, 14, 0, 0, 0).unwrap();
+    seed_cache_with(
+        tmp.path(),
+        "9.9.9",
+        Utc::now(),
+        published_at,
+        "https://github.com/tatari-tv/ccu/releases/tag/v9.9.9",
+    );
+    let renew = offline_renew(&api, tmp.path());
+
+    let update = renew.check_latest().unwrap();
+    let (line, code) = render_check(&renew, &update);
+
+    assert_eq!(code, 1);
+    assert!(line.contains("2024-03-14"), "line must carry the cached date: {line}");
+    assert!(!line.contains("1970-01-01"), "must not fabricate the epoch: {line}");
+}
+
+/// Every cache file in the fleet today is this field-less shape. It must read as a
+/// cache MISS (self-healing refresh), not feed a report a date it never recorded.
+#[test]
+fn test_legacy_two_key_cache_entry_is_a_cache_miss() {
+    let api = CannedApi::status(404, "Not Found");
+    let tmp = tempfile::tempdir().unwrap();
+    seed_legacy_cache(tmp.path(), "9.9.9", Duration::from_secs(0));
+    let renew = offline_renew(&api, tmp.path());
+
+    // A legacy entry cannot back a report, so the check falls through to the network,
+    // which fails here, so the check fails rather than silently reporting the legacy
+    // entry as if it were current.
+    let result = renew.check_latest();
+    assert!(
+        matches!(&result, Err(Error::CheckFailed { .. })),
+        "a legacy entry must not be usable for a report: {result:?}"
+    );
 }
 
 /// The bare `<bin> update` form is `check` with no refresh, so it must land on the same

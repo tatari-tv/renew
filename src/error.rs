@@ -19,6 +19,16 @@ pub enum Error {
     #[error("no release found for {repo}")]
     NoRelease { repo: String },
 
+    /// GitHub returned a release whose `published_at` this build cannot parse. Reported
+    /// rather than silently defaulted to "now": a report that does not know the release
+    /// date must say so, not invent one (see the design doc's D3).
+    #[error("release date {value:?} could not be parsed: {source}")]
+    InvalidPublishedAt {
+        value: String,
+        #[source]
+        source: chrono::ParseError,
+    },
+
     /// An update check that did not succeed, whether or not the cache held something.
     ///
     /// It exists because reusing the inner error lies: a private-repo 404 arrives here as

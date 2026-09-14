@@ -2,7 +2,7 @@ use crate::Renew;
 use crate::backup;
 use crate::error::Error;
 use crate::install;
-use crate::version::parse_tag;
+use crate::version::{Update, parse_tag};
 use semver::Version;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -84,22 +84,29 @@ impl UpdateCmd {
 
 fn run_check(renew: &Renew, refresh: bool) -> crate::Result<i32> {
     let update = if refresh { renew.check_latest_refresh()? } else { renew.check_latest()? };
+    let (line, code) = render_check(renew, &update);
+    println!("{line}");
+    Ok(code)
+}
 
+/// The report line and exit code for a completed check, split out of [`run_check`] as a
+/// pure function so a test can assert the rendered text - including that a cached
+/// `published_at` flows through rather than being fabricated - without scraping process
+/// stdout (`cargo test`'s default output capture intercepts `println!` before it reaches
+/// a real file descriptor, so there is nothing to scrape).
+fn render_check(renew: &Renew, update: &Option<Update>) -> (String, i32) {
     match update {
-        None => {
-            println!("{} {} (latest)", renew.bin, renew.current);
-            Ok(0)
-        }
-        Some(u) => {
-            println!(
+        None => (format!("{} {} (latest)", renew.bin, renew.current), 0),
+        Some(u) => (
+            format!(
                 "{} {} \u{2192} {} available (released {})",
                 renew.bin,
                 u.current,
                 u.latest,
                 u.published_at.format("%Y-%m-%d")
-            );
-            Ok(1)
-        }
+            ),
+            1,
+        ),
     }
 }
 

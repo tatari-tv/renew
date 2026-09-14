@@ -82,3 +82,80 @@ Design doc: `slack-cli docs/design/2026-09-14-valet-default-mcp-key-update-repor
 - With `force` gone from `refresh_and_compare`, the refresh / no-refresh distinction lives
   entirely in `check_latest` vs `check_latest_refresh`. W3 Phase 3 makes `--refresh`
   global; confirm that is the intended seam before wiring the flag.
+
+## Phase 2 (W3): Stop fabricating the report
+
+### Design decisions
+
+- `cache::CacheEntry` gains `published_at: Option<DateTime<Utc>>` and
+  `release_url: Option<String>` (`src/cache.rs`), kebab-cased on disk to `published-at` /
+  `release-url` as the doc specifies. No `#[serde(default)]` was needed: serde's derive
+  already treats a missing key as `None` for an `Option` field, which is what makes a
+  legacy two-key file deserialize without error.
+- `Renew::compare_cached` now takes the whole `&cache::CacheEntry` and returns
+  `Option<Result<Option<Update>>>` (`src/renew.rs`): the outer `None` means "this entry
+  cannot back a report" (either field missing), which both callers treat exactly like "no
+  cache" rather than rendering partial data. This is the single seam that makes the schema
+  bump self-healing: a legacy entry read at a fresh-hit TTL falls through to
+  `refresh_and_compare`, which writes a full entry on success.
+- The stale-fallback caller (`fallback_to_cache`'s `LockHeld` arm) applies the same
+  `compare_cached` and the same "unusable = treat as absent" rule, so a legacy entry there
+  lands on the existing `Error::CheckFailed { stale: None, .. }` arm rather than a new one.
+- The network path's parse of GitHub's `published_at` string is now a named failure
+  (`Error::InvalidPublishedAt { value, source }`, `src/error.rs`) instead of a silent
+  default. It returns before the `CacheEntry` is built, so bad data is never cached either
+  - a later, working check is not corrupted by what a broken one wrote.
+- `render_check` (`src/cmd.rs`) is `run_check`'s match arms pulled out into a pure
+  `(String, i32)` function. `run_check` itself is unchanged in behavior (same `println!`,
+  same exit codes); the split exists purely to give a test something to assert against.
+- `src/fixture.rs`: `seed_cache` now writes a full, usable entry (adds `published_at` /
+  `release_url` so every EXISTING cache-hit test keeps reporting); `seed_cache_with` adds
+  explicit control over `checked_at` / `published_at` for a test asserting a SPECIFIC
+  date; `seed_legacy_cache` writes raw two-key YAML (not through `CacheEntry`, so the new
+  keys are genuinely ABSENT rather than present-and-null) to cover the fleet's actual
+  on-disk shape; `CannedApi::json` serves a 200 with a body so the network path can be
+  driven past deserialization into an unparseable `published_at`, `CannedApi::status`
+  becoming a thin wrapper over the same `respond`.
+
+### Deviations
+
+- Same effect, correct seam: the doc doesn't specify a return type for `compare_cached`
+  beyond "uses the cached values"; making it `Option<Result<Option<Update>>>` (rather than
+  panicking, defaulting, or erroring outright on a missing field) is what lets BOTH callers
+  apply the "unusable = absent" rule in one place instead of duplicating a field-presence
+  check at each call site.
+- The network-path fix is reported as a named `Error::InvalidPublishedAt`, not specified in
+  the doc's Data Model / API Design sections (those cover only `CheckFailed` from Phase 1).
+  An unparseable timestamp cannot be turned into a valid `Update`/`CacheEntry` without
+  inventing a date, so honesty forces a new failure variant; it deliberately does NOT route
+  through `fallback_to_cache`/`CheckFailed`, mirroring the existing (pre-Phase-2) handling
+  of a bad `tag_name` a few lines above it, which also returns `Err(e)` directly rather than
+  offering stale-cache context.
+- Criterion 2 ("a test feeds a cache entry with a known published-at through `run_check`
+  and asserts the rendered line carries THAT date") is tested via the extracted
+  `render_check` pure function rather than by scraping process stdout: `cargo test`'s
+  default output capture intercepts `println!` before it reaches a real file descriptor
+  (it is a thread-local override inside libtest, not fd redirection), so there is nothing
+  at the OS level to capture without `--nocapture`. The test still drives the real
+  `check_latest` -> `compare_cached` -> `render_check` path end to end; only the final
+  `println!` is swapped for asserting the string `render_check` already computed.
+- Criterion 1's grep is satisfied by two adjustments to comment WORDING in `src/renew.rs`
+  (not code): explanatory comments that named the literal tokens `UNIX_EPOCH` and
+  `unwrap_or(Utc::now())` for context were reworded to describe the same fabrication
+  without quoting it verbatim, since the doc's criterion is a literal zero-line grep
+  against the whole file, comments included.
+
+### Tradeoffs
+
+- `seed_legacy_cache` writes YAML by hand instead of constructing a `CacheEntry` with
+  `#[serde(skip_serializing)]` fields or a second struct: it costs a hardcoded string, but
+  proves the ACTUAL on-disk shape (keys absent) rather than a shape that happens to
+  round-trip the same way (keys present as `null`), which is the distinction the design
+  doc's Data Model section calls out as load-bearing.
+- `CannedApi::json` vs a second fixture type: folding it into the existing `CannedApi` via
+  a shared `respond` keeps one loopback-listener implementation instead of two, at the cost
+  of `status` no longer being the only constructor.
+
+### Open questions
+
+- None.
