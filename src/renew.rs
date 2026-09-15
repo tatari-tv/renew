@@ -307,16 +307,29 @@ impl Renew {
     ///
     /// Never `Ok(None)`: reporting "up to date" from a check that did not happen is the
     /// defect this function exists to prevent, and all four of its callers shared it.
+    /// The only success it can return is `Ok(Some(update))` under lock contention: "an
+    /// update exists" does not stop being true because a peer is refreshing, so a stale
+    /// cache may still inform. "You are current" is the cache voting, and it never gets
+    /// to cast that vote.
     fn fallback_to_cache(&self, why: Fallback) -> Result<Option<Update>> {
         let cached = cache::load(&self.cache_dir);
         match why {
-            // A pre-schema-bump entry is NOT usable for a report (no `published_at`/
-            // `release_url`), so `compare_cached` returning `None` falls into the same
-            // "nothing to report" arm as no cache file at all.
             Fallback::LockHeld => match cached.as_ref().and_then(|c| self.compare_cached(c)) {
-                Some(result) => result,
-                None => Err(Error::CheckFailed {
-                    stale: None,
+                // The one thing a stale cache may still assert: a newer release exists.
+                Some(Ok(Some(update))) => Ok(Some(update)),
+                // A cached tag we cannot parse is a broken entry, reported as itself.
+                Some(Err(e)) => Err(e),
+                // Everything else is the cache having nothing it is entitled to say: an
+                // entry that merely names the current version (`Ok(None)` - the cache
+                // VOTING that the user is up to date), a pre-schema-bump entry unusable
+                // for a report (no `published_at`/`release_url`, so `compare_cached`
+                // yields `None`), or no cache file at all. A check that did not happen
+                // cannot report "(latest)".
+                Some(Ok(None)) | None => Err(Error::CheckFailed {
+                    stale: cached.map(|c| StaleCache {
+                        latest_version: c.latest_version,
+                        checked_at: c.checked_at,
+                    }),
                     source: Box::new(Error::Io(std::io::Error::new(
                         std::io::ErrorKind::WouldBlock,
                         "another process is refreshing the update cache",

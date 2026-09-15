@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use crate::fixture::{CannedApi, offline_renew, seed_cache, seed_cache_with, seed_legacy_cache};
+use crate::fixture::{CannedApi, hold_refresh_lock, offline_renew, seed_cache, seed_cache_with, seed_legacy_cache};
 use chrono::{TimeZone, Utc};
 use clap::Parser;
 use std::time::Duration;
@@ -182,6 +182,52 @@ fn test_legacy_two_key_cache_entry_is_a_cache_miss() {
         matches!(&result, Err(Error::CheckFailed { .. })),
         "a legacy entry must not be usable for a report: {result:?}"
     );
+}
+
+/// A stale cache can inform. It cannot vote. A peer holding the refresh lock means no
+/// check of our own happened, so an entry that merely says "you are on the newest
+/// version" is the cache voting - and this is the gap the other three fallthrough arms
+/// were fixed through while this one kept reporting "(latest)" at exit 0.
+///
+/// The sibling case, an entry naming a NEWER version, is still reported from cache
+/// (`test_lock_held_by_peer_still_reports_from_cache`): "an update exists" does not stop
+/// being true because a peer is refreshing.
+#[test]
+fn test_lock_held_with_cache_saying_current_does_not_claim_latest() {
+    let api = CannedApi::status(500, "Internal Server Error");
+    let tmp = tempfile::tempdir().unwrap();
+    let checked_at = Utc::now() - chrono::Duration::days(3);
+    seed_cache_with(
+        tmp.path(),
+        "0.4.3",
+        checked_at,
+        checked_at,
+        "https://github.com/tatari-tv/ccu/releases/tag/v0.4.3",
+    );
+    let lock = hold_refresh_lock(tmp.path());
+    let renew = offline_renew(&api, tmp.path()).with_cache_ttl(Duration::from_secs(0));
+
+    let result = renew.check_latest();
+    assert!(
+        matches!(&result, Err(Error::CheckFailed { .. })),
+        "a three-day-old entry naming the current version must not pass as a verdict: {result:?}"
+    );
+
+    let code = UpdateCmd {
+        cmd: Some(UpdateSub::Check),
+        refresh: false,
+    }
+    .run(&renew);
+    assert_eq!(code, 2, "a check that did not happen must exit 2, not 0");
+
+    // Nail the rendered claim itself: exit 0 is reachable only through the `None` arm,
+    // which is the literal "(latest)" line.
+    assert_ne!(
+        render_check(&renew, &None).1,
+        code,
+        "the lock-held path must not land on the (latest) rendering"
+    );
+    drop(lock);
 }
 
 /// The bare `<bin> update` form is `check` with no refresh, so it must land on the same

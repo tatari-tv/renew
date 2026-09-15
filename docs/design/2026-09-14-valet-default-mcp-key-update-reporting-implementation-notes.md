@@ -237,3 +237,50 @@ Design doc: `slack-cli docs/design/2026-09-14-valet-default-mcp-key-update-repor
 ### Open questions
 
 - None.
+
+## Audit fold-in: M2 (lock-held arm)
+
+### Design decisions
+
+- The lock-held arm now splits on WHAT the cache says rather than merely on whether it
+  said anything - `src/renew.rs:fallback_to_cache` - because the two cached verdicts are
+  not equally true once a check did not happen. A cached `Ok(Some(update))` stays
+  reportable: "a newer release exists" does not stop being true because a peer holds
+  `refresh.lock`. A cached `Ok(None)` is the stale cache voting that the caller is
+  current, which is exactly the D3 defect, and it now takes the same `CheckFailed` path
+  as an empty cache (exit 2) instead of rendering `<bin> <version> (latest)` at exit 0.
+- The `CheckFailed` the lock-held arm raises now carries `stale: cached.map(..)` rather
+  than a hardcoded `stale: None` - `src/renew.rs:fallback_to_cache` - so the failure
+  message names what the cache knew and when ("from cache, unverified: last seen X
+  (checked at ...)"), matching the `Fallback::Failed` arm. With no cache file at all the
+  map yields `None`, so `test_lock_held_by_peer_with_empty_cache_is_an_error`'s
+  `stale: None` assertion is unaffected.
+- The regression test lives in `src/cmd/tests.rs`, not beside its two siblings in
+  `src/renew/tests.rs`, because the claim under test is "does not report `(latest)` at
+  exit 0" and both the rendering (`render_check`) and the exit code (`UpdateCmd::run`)
+  are private to `cmd`. It asserts all three: the `Err(CheckFailed)`, the exit code 2,
+  and that the code is not the one `render_check(&renew, &None)` produces.
+- The `fallback_to_cache` doc comment at `src/renew.rs:306` kept its "never `Ok(None)`"
+  sentence (now true on all four arms) and gained the distinction that makes it true:
+  the only success it can return is `Ok(Some(update))` under contention.
+
+### Deviations
+
+- None. The W3 Phase 1 bullet that lock contention is not in itself a failure is intact:
+  contention still reports from cache whenever the cache has something it is entitled to
+  say. What narrowed is the set of things it is entitled to say.
+
+### Tradeoffs
+
+- Matching on `Some(Ok(Some(_))) / Some(Err(_)) / Some(Ok(None)) | None` vs keeping the
+  flat `Some(result) => result` and filtering afterward: the nested match is wordier but
+  puts the "informs vs votes" distinction in the control flow where a reader hits it,
+  rather than in a comment above a passthrough.
+- `Some(Err(e)) => Err(e)` passes an unparseable cached tag through as `InvalidTag`
+  rather than wrapping it in `CheckFailed` like its neighbors. It already exits 2 and
+  already names its own cause, so wrapping it would only add a layer; the cost is that
+  the three failure exits from this arm do not all render with the same prefix.
+
+### Open questions
+
+- None.
