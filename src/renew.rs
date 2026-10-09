@@ -3,7 +3,6 @@ use crate::cache;
 use crate::error::{Error, Result, StaleCache};
 use crate::github;
 use crate::install;
-use crate::platform;
 use crate::repo::RepoSlug;
 use crate::version::{InstalledVersion, Update, parse_current, parse_tag};
 use chrono::{DateTime, Utc};
@@ -48,6 +47,26 @@ pub fn xdg_data_dir() -> Option<PathBuf> {
         }
     }
     dirs::home_dir().map(|h| h.join(".local").join("share"))
+}
+
+/// Last-resort token for `TokenSource::EnvAuto`: whatever `gh auth token` prints.
+///
+/// Private repos 404 anonymously, and most engineers are logged in to `gh` but do not
+/// export `GH_TOKEN`, so without this the update check against a private repo can never
+/// succeed for them. A missing `gh`, a logged-out `gh`, or empty output all mean "no
+/// token", never an error: a public repo still works anonymously.
+fn gh_cli_token() -> Option<String> {
+    let out = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let token = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (!token.is_empty()).then_some(token)
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +164,8 @@ impl Renew {
             TokenSource::EnvAuto => std::env::var("GH_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty())
-                .or_else(|| std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty())),
+                .or_else(|| std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty()))
+                .or_else(gh_cli_token),
             TokenSource::Explicit(t) => t.clone(),
         }
     }
@@ -408,28 +428,20 @@ impl Renew {
         )
     }
 
-    /// Install a specific version.
+    /// Install a specific version, fetched by its tag (not necessarily the latest).
     pub fn install_version(&self, version: &Version) -> Result<InstalledVersion> {
         let tag = format!("v{version}");
-        let parsed = parse_tag(&tag)?;
-        log::debug!("install_version: {} on {}", parsed, self.repo.as_path());
+        log::debug!("install_version: {} on {}", tag, self.repo.as_path());
         let install_path = self.resolve_install_path()?;
         self.preflight()?;
         let token = self.resolve_token();
-        let info = github::latest_release(
+        let info = github::release_by_tag(
             &self.api_base,
             &self.repo.as_path(),
+            &tag,
             token.as_deref(),
             self.network_timeout,
         )?;
-        // Verify the requested tag matches what GitHub returned.
-        let platform = platform::current_platform()?;
-        log::debug!("install_version: platform={}", platform);
-        if parse_tag(&info.tag_name)? != parsed {
-            return Err(Error::NoRelease {
-                repo: self.repo.as_path(),
-            });
-        }
         install::run(
             &self.repo.as_path(),
             &self.bin,
