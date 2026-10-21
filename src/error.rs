@@ -19,6 +19,14 @@ pub enum Error {
     #[error("no release found for {repo}")]
     NoRelease { repo: String },
 
+    /// A 404 from a request that carried no token. For a private repo that is what GitHub
+    /// returns to anyone it will not show the repo to, so say how to authenticate rather
+    /// than claim the repo has no releases.
+    #[error(
+        "no release found for {repo} (no GitHub token was sent; for a private repo set GH_TOKEN or run `gh auth login`)"
+    )]
+    NoReleaseAnonymous { repo: String },
+
     /// GitHub returned a release whose `published_at` this build cannot parse. Reported
     /// rather than silently defaulted to "now": a report that does not know the release
     /// date must say so, not invent one (see the design doc's D3).
