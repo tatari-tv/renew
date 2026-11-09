@@ -42,8 +42,10 @@ fn main() {
 on the tag, `vX.Y.Z-N-g<sha>` N commits past it, and the bare `vX.Y.Z` before the tag
 exists. It can never name an older tag. It also emits `GIT_REVISION`, `GIT_SHA` and
 `GIT_BRANCH`, resolves the real git dir (plain repo, workspace member, worktree) for
-`cargo:rerun-if-changed`, and fails the build in CI on a shallow or tagless checkout
-with a message naming the fix. No env var overrides the version.
+`cargo:rerun-if-changed`, and fails the build on a shallow checkout (and, in CI, on a
+checkout with no git repository or an untracked Cargo.toml), each with a message naming
+the fix. A missing tag is not a failure: it emits the bare `vX.Y.Z`. No env var
+overrides the version.
 
 Set `--version` from it (clap): `#[command(version = env!("BUILD_VERSION"))]`, and in
 `Cargo.toml` `[package]` set `build = "build.rs"`.

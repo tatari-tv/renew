@@ -97,8 +97,9 @@ actually reports.
 `Renew::new` normalizes the string before comparing: it strips a leading `v` and a
 trailing `-<count>-g<sha>[-dirty]` describe suffix, leaving the base semver
 (`v1.2.1-3-gabc123` → `1.2.1`), while preserving a genuine prerelease (`1.2.1-rc.1`).
-A bare SHA or an empty/whitespace `BUILD_VERSION` is a construction error (see the
-note below on handling it).
+A bare SHA is a construction error (see the note below on handling it); an empty or
+whitespace `BUILD_VERSION` is dropped by `renew!()`, which then falls back to
+`CARGO_PKG_VERSION`.
 
 For this to work the Consumer's `build.rs` calls `build_version::emit()`:
 
