@@ -65,19 +65,41 @@ pub(crate) fn latest_release(
     token: Option<&str>,
     timeout: Duration,
 ) -> Result<ReleaseInfo> {
+    fetch_release(api_base, repo_path, "latest", token, timeout)
+}
+
+/// The release for one specific tag (`GET /releases/tags/{tag}`), for pinned installs.
+pub(crate) fn release_by_tag(
+    api_base: &str,
+    repo_path: &str,
+    tag: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<ReleaseInfo> {
+    fetch_release(api_base, repo_path, &format!("tags/{tag}"), token, timeout)
+}
+
+fn fetch_release(
+    api_base: &str,
+    repo_path: &str,
+    which: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<ReleaseInfo> {
     log::debug!(
-        "latest_release: base={} repo={} auth={}",
+        "fetch_release: base={} repo={} which={} auth={}",
         api_base,
         repo_path,
+        which,
         token.is_some()
     );
 
     let agent = api_agent(timeout);
-    let url = format!("{}/repos/{repo_path}/releases/latest", api_base.trim_end_matches('/'));
+    let url = format!("{}/repos/{repo_path}/releases/{which}", api_base.trim_end_matches('/'));
 
     let resp = make_api_get(&agent, &url, token);
 
-    let mut response = map_api_error(resp, repo_path)?;
+    let mut response = map_api_error(resp, repo_path, token.is_some())?;
 
     let text = response
         .body_mut()
@@ -87,7 +109,7 @@ pub(crate) fn latest_release(
         .map_err(Error::Network)?;
 
     let info: ReleaseInfo = serde_json::from_str(&text)?;
-    log::debug!("latest_release: tag={} assets={}", info.tag_name, info.assets.len());
+    log::debug!("fetch_release: tag={} assets={}", info.tag_name, info.assets.len());
     Ok(info)
 }
 
@@ -141,6 +163,7 @@ fn make_api_get(
 fn map_api_error(
     resp: std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     repo_path: &str,
+    authenticated: bool,
 ) -> Result<ureq::http::Response<ureq::Body>> {
     match resp {
         Ok(r) => Ok(r),
@@ -148,6 +171,9 @@ fn map_api_error(
             log::warn!("GitHub rate limit exceeded");
             Err(Error::RateLimited { retry_after: None })
         }
+        Err(ureq::Error::StatusCode(404)) if !authenticated => Err(Error::NoReleaseAnonymous {
+            repo: repo_path.to_string(),
+        }),
         Err(ureq::Error::StatusCode(404)) => Err(Error::NoRelease {
             repo: repo_path.to_string(),
         }),
