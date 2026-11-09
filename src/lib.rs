@@ -24,16 +24,18 @@ pub use version::{InstalledVersion, Update};
 ///
 /// Expands at the **consumer's** call site (macro expansion happens during the
 /// consumer crate's compilation), so `option_env!`/`env!` read the consumer build
-/// script's `GIT_DESCRIBE` and the consumer's `CARGO_PKG_VERSION` — never renew's own.
-/// The `.filter` guards a consumer build script that emits an empty/whitespace
-/// `GIT_DESCRIBE` on git failure, falling back to `CARGO_PKG_VERSION`.
+/// script's `BUILD_VERSION` and the consumer's `CARGO_PKG_VERSION` — never renew's own.
+/// `BUILD_VERSION` is what the fleet's `build-version` crate emits from `build.rs`:
+/// `vX.Y.Z` on the release tag, `vX.Y.Z-N-g<sha>` past it, anchored on the consumer's
+/// Cargo.toml version. A consumer without a `build.rs` has no `BUILD_VERSION` and
+/// gets `CARGO_PKG_VERSION`; the `.filter` guards a build script that set it empty.
 ///
 /// Not part of the public API; call `renew!()` instead.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __renew_current_version {
     () => {
-        option_env!("GIT_DESCRIBE")
+        option_env!("BUILD_VERSION")
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(env!("CARGO_PKG_VERSION"))
     };
@@ -43,7 +45,7 @@ macro_rules! __renew_current_version {
 ///
 /// The no-arg form reads `CARGO_PKG_REPOSITORY` (the repo to check for releases)
 /// and `CARGO_PKG_NAME` (the binary/asset name to download) plus the current
-/// version from `GIT_DESCRIBE`/`CARGO_PKG_VERSION`:
+/// version from `BUILD_VERSION`/`CARGO_PKG_VERSION`:
 ///
 /// ```ignore
 /// renew!()                                  // repo + bin from Cargo metadata
