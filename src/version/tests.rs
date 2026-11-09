@@ -46,7 +46,7 @@ fn test_version_comparison() {
     assert!(newer > older);
 }
 
-// --- parse_current: the GIT_DESCRIBE-tolerant matrix ---
+// --- parse_current: the BUILD_VERSION-tolerant matrix ---
 
 #[test]
 fn test_parse_current_plain_semver() {
@@ -60,7 +60,7 @@ fn test_parse_current_v_prefix() {
 
 #[test]
 fn test_parse_current_describe_suffix() {
-    // git describe dev build: strip `-<count>-g<sha>` down to the base tag.
+    // dev build past the tag: strip `-<count>-g<sha>` down to the base tag.
     assert_eq!(parse_current("v1.2.1-3-gabc123").unwrap(), Version::new(1, 2, 1));
 }
 

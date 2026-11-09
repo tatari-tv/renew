@@ -27,7 +27,7 @@ pub(crate) fn parse_tag(tag: &str) -> Result<Version> {
     })
 }
 
-/// Parse the running binary's version from a `GIT_DESCRIBE`-or-`CARGO_PKG_VERSION`
+/// Parse the running binary's version from a `BUILD_VERSION`-or-`CARGO_PKG_VERSION`
 /// string. Accepts: `1.2.1`, `v1.2.1`, `v1.2.1-3-gabc123`, `v1.2.1-3-gabc123-dirty`,
 /// and a genuine prerelease `1.2.1-rc.1` (left intact). Errors on a bare SHA or an
 /// empty/whitespace string.
@@ -41,7 +41,7 @@ pub(crate) fn parse_current(input: &str) -> Result<Version> {
     })
 }
 
-/// Remove a `git describe` suffix `-<count>-g<sha>[-dirty]`, leaving the base tag.
+/// Remove a describe suffix `-<count>-g<sha>[-dirty]`, leaving the base tag.
 ///
 /// Scans from the **right** (the describe suffix is always the final one), so a base
 /// tag that itself carries a prerelease (`1.2.1-rc.1-3-gabc`) keeps `1.2.1-rc.1`, and a

@@ -85,34 +85,38 @@ That's the full integration. `cargo run -- update check` / `update install --yes
 
 ## Current version source
 
-`renew!()` resolves the running binary's version from **`GIT_DESCRIBE`** — the
-`git describe --tags` string a Consumer's `build.rs` emits — when it is set and
-non-empty, falling back to `CARGO_PKG_VERSION` otherwise. This matches the version
-every fleet Consumer already prints from `--version`, so the "current" version renew
-compares is the one the binary actually reports.
+`renew!()` resolves the running binary's version from **`BUILD_VERSION`**, the
+value the fleet's [`build-version`](https://github.com/tatari-tv/build-version-rs)
+crate emits from a Consumer's `build.rs`, when it is set and non-empty, falling back
+to `CARGO_PKG_VERSION` otherwise. `BUILD_VERSION` is anchored on the Consumer's own
+Cargo.toml version tag: `vX.Y.Z` on the tag, `vX.Y.Z-N-g<sha>` N commits past it, and
+the bare `vX.Y.Z` before the tag exists. This matches the version every fleet Consumer
+prints from `--version`, so the "current" version renew compares is the one the binary
+actually reports.
 
-`Renew::new` normalizes the describe string before comparing: it strips a leading `v`
-and a trailing `-<count>-g<sha>[-dirty]` describe suffix, leaving the base semver
+`Renew::new` normalizes the string before comparing: it strips a leading `v` and a
+trailing `-<count>-g<sha>[-dirty]` describe suffix, leaving the base semver
 (`v1.2.1-3-gabc123` → `1.2.1`), while preserving a genuine prerelease (`1.2.1-rc.1`).
-A bare SHA (untagged build) or an empty/whitespace `GIT_DESCRIBE` is a construction
-error — see the note below on handling it.
+A bare SHA or an empty/whitespace `BUILD_VERSION` is a construction error (see the
+note below on handling it).
 
-For this to work the Consumer's `build.rs` must emit `GIT_DESCRIBE`, and should guard
-it behind `output.status.success()` so a git failure yields the `CARGO_PKG_VERSION`
-fallback rather than an empty string:
+For this to work the Consumer's `build.rs` calls `build_version::emit()`:
+
+```toml
+# Cargo.toml
+[build-dependencies]
+build-version = { git = "https://github.com/tatari-tv/build-version-rs", tag = "v0.1.0", version = "0.1.0" }
+```
 
 ```rust
 // build.rs
-let describe = std::process::Command::new("git")
-    .args(["describe", "--tags", "--always"])
-    .output()
-    .ok()
-    .filter(|o| o.status.success())
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    .filter(|s| !s.is_empty())
-    .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
+fn main() {
+    build_version::emit();
+}
 ```
+
+A Consumer without a `build.rs` has no `BUILD_VERSION` at all, so `renew!()` reads its
+`CARGO_PKG_VERSION`; that is the release version on a tagged build.
 
 ### Handling a construction error
 
