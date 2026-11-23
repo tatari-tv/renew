@@ -13,6 +13,7 @@ mod install;
 mod platform;
 mod renew;
 mod repo;
+mod timefmt;
 mod version;
 
 pub use cmd::UpdateCmd;

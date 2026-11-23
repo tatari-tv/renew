@@ -1,8 +1,8 @@
-use chrono::{DateTime, Utc};
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
+use time::OffsetDateTime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -26,7 +26,7 @@ pub enum Error {
     InvalidPublishedAt {
         value: String,
         #[source]
-        source: chrono::ParseError,
+        source: time::error::Parse,
     },
 
     /// An update check that did not succeed, whether or not the cache held something.
@@ -84,7 +84,7 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct StaleCache {
     pub latest_version: String,
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: OffsetDateTime,
 }
 
 impl fmt::Display for StaleCache {
@@ -93,7 +93,7 @@ impl fmt::Display for StaleCache {
             f,
             "last seen {} (checked at {})",
             self.latest_version,
-            self.checked_at.to_rfc3339()
+            crate::timefmt::format_rfc3339(self.checked_at, false)
         )
     }
 }

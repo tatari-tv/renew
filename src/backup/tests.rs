@@ -117,10 +117,28 @@ fn test_peek_returns_none_when_absent() {
 fn test_meta_serializes_kebab_case() {
     let meta = BackupMeta {
         version: "0.4.3".to_string(),
-        saved_at: chrono::Utc::now(),
+        saved_at: time::OffsetDateTime::now_utc(),
         original_path: std::path::PathBuf::from("/home/user/.cargo/bin/ccu"),
     };
     let yaml = serde_yaml::to_string(&meta).unwrap();
     assert!(yaml.contains("saved-at"));
     assert!(yaml.contains("original-path"));
+}
+
+#[test]
+fn test_loads_chrono_era_meta_file() {
+    let meta: BackupMeta = serde_yaml::from_str(include_str!("../../tests/fixtures/chrono-era/meta.yml")).unwrap();
+    assert_eq!(meta.version, "0.4.3");
+    assert_eq!(meta.saved_at, time::macros::datetime!(2024-03-14 01:02:03.12 UTC));
+    assert_eq!(
+        meta.original_path,
+        std::path::PathBuf::from("/home/user/.cargo/bin/ccu")
+    );
+}
+
+#[test]
+fn test_chrono_era_meta_reserializes_byte_for_byte() {
+    let text = include_str!("../../tests/fixtures/chrono-era/meta.yml");
+    let meta: BackupMeta = serde_yaml::from_str(text).unwrap();
+    assert_eq!(serde_yaml::to_string(&meta).unwrap(), text);
 }

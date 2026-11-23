@@ -99,7 +99,7 @@ fn render_check(renew: &Renew, update: &Option<Update>) -> (String, i32) {
                 renew.bin,
                 u.current,
                 u.latest,
-                u.published_at.format("%Y-%m-%d")
+                crate::timefmt::format_date(u.published_at)
             ),
             1,
         ),

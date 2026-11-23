@@ -1,8 +1,8 @@
 use crate::error::{Error, Result};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use time::OffsetDateTime;
 
 pub(crate) const CACHE_FILE: &str = "check.yml";
 const LOCK_FILE: &str = "refresh.lock";
@@ -17,17 +17,16 @@ const LOCK_FILE: &str = "refresh.lock";
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CacheEntry {
     pub(crate) latest_version: String,
-    pub(crate) checked_at: DateTime<Utc>,
-    pub(crate) published_at: Option<DateTime<Utc>>,
+    #[serde(with = "crate::timefmt::serde_rfc3339")]
+    pub(crate) checked_at: OffsetDateTime,
+    #[serde(default, with = "crate::timefmt::serde_rfc3339_option")]
+    pub(crate) published_at: Option<OffsetDateTime>,
     pub(crate) release_url: Option<String>,
 }
 
 impl CacheEntry {
     pub(crate) fn is_fresh(&self, ttl: Duration) -> bool {
-        let age = Utc::now()
-            .signed_duration_since(self.checked_at)
-            .to_std()
-            .unwrap_or(Duration::MAX);
+        let age = Duration::try_from(OffsetDateTime::now_utc() - self.checked_at).unwrap_or(Duration::MAX);
         age < ttl
     }
 }

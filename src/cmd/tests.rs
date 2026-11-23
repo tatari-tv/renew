@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::fixture::{CannedApi, hold_refresh_lock, offline_renew, seed_cache, seed_cache_with, seed_legacy_cache};
-use chrono::{TimeZone, Utc};
 use clap::Parser;
 use std::time::Duration;
+use time::OffsetDateTime;
+use time::macros::datetime;
 
 fn make_renew() -> Renew {
     Renew::new("tatari-tv/ccu", "ccu", "0.4.3").unwrap()
@@ -147,11 +148,11 @@ fn test_run_revert_no_backup_exits_2() {
 fn test_run_check_reports_the_cached_release_date_not_a_fabricated_one() {
     let api = CannedApi::status(500, "Internal Server Error"); // fresh cache hit, no network needed
     let tmp = tempfile::tempdir().unwrap();
-    let published_at = Utc.with_ymd_and_hms(2024, 3, 14, 0, 0, 0).unwrap();
+    let published_at = datetime!(2024-03-14 00:00:00 UTC);
     seed_cache_with(
         tmp.path(),
         "9.9.9",
-        Utc::now(),
+        OffsetDateTime::now_utc(),
         published_at,
         "https://github.com/tatari-tv/ccu/releases/tag/v9.9.9",
     );
@@ -196,7 +197,7 @@ fn test_legacy_two_key_cache_entry_is_a_cache_miss() {
 fn test_lock_held_with_cache_saying_current_does_not_claim_latest() {
     let api = CannedApi::status(500, "Internal Server Error");
     let tmp = tempfile::tempdir().unwrap();
-    let checked_at = Utc::now() - chrono::Duration::days(3);
+    let checked_at = OffsetDateTime::now_utc() - time::Duration::days(3);
     seed_cache_with(
         tmp.path(),
         "0.4.3",
