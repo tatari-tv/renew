@@ -23,7 +23,7 @@ pub(crate) fn format_rfc3339_offset(at: OffsetDateTime) -> String {
 fn format_utc(at: OffsetDateTime, suffix: &str) -> String {
     let at = at.to_offset(UtcOffset::UTC);
     let nanos = at.nanosecond();
-    // `is_multiple_of` needs Rust 1.90; the crate's MSRV is 1.89.
+    // `is_multiple_of` would now compile (MSRV is 1.100); the plain remainder checks stay as written.
     let fraction = match (nanos, nanos % 1_000_000, nanos % 1_000) {
         (0, _, _) => String::new(),
         (_, 0, _) => format!(".{:03}", nanos / 1_000_000),
