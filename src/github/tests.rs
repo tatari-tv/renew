@@ -73,15 +73,48 @@ fn test_release_info_deserialize() {
 /// The API base is a parameter so this path exists at all: with the bare const, a 404 -
 /// what a private repo returns to a token that cannot see it - was unreachable offline.
 #[test]
-fn test_latest_release_maps_404_to_no_release_against_injected_base() {
+fn test_latest_release_maps_anonymous_404_to_no_release_anonymous_against_injected_base() {
     let api = CannedApi::status(404, "Not Found");
 
     let err = latest_release(api.base(), "tatari-tv/ccu", None, Duration::from_secs(5)).unwrap_err();
 
     assert!(
+        matches!(err, Error::NoReleaseAnonymous { .. }),
+        "expected NoReleaseAnonymous, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("GH_TOKEN"),
+        "anonymous 404 must say how to authenticate: {err}"
+    );
+}
+
+#[test]
+fn test_latest_release_maps_authenticated_404_to_no_release_against_injected_base() {
+    let api = CannedApi::status(404, "Not Found");
+
+    let err = latest_release(
+        api.base(),
+        "tatari-tv/ccu",
+        Some("ghp_unusable"),
+        Duration::from_secs(5),
+    )
+    .unwrap_err();
+
+    assert!(
         matches!(err, Error::NoRelease { .. }),
         "expected NoRelease, got {err:?}"
     );
+}
+
+/// A pinned install must be able to fetch a release that is not the latest one.
+#[test]
+fn test_release_by_tag_parses_the_tagged_release() {
+    let body = r#"{"tag_name":"v0.4.0","html_url":"https://github.com/tatari-tv/ccu/releases/tag/v0.4.0","published_at":"2026-04-01T08:00:00Z","assets":[]}"#;
+    let api = CannedApi::json(200, "OK", body);
+
+    let info = release_by_tag(api.base(), "tatari-tv/ccu", "v0.4.0", None, Duration::from_secs(5)).unwrap();
+
+    assert_eq!(info.tag_name, "v0.4.0");
 }
 
 #[test]
