@@ -124,7 +124,7 @@ pub(crate) fn seed_legacy_cache(cache_dir: &Path, latest: &str, age: Duration) {
     let checked_at = OffsetDateTime::now_utc() - time::Duration::try_from(age).expect("representable age");
     let yaml = format!(
         "latest-version: {latest}\nchecked-at: {}\n",
-        crate::timefmt::format_rfc3339(checked_at, false)
+        crate::timefmt::format_rfc3339_offset(checked_at)
     );
     std::fs::write(cache_dir.join(cache::CACHE_FILE), yaml).expect("write legacy cache entry");
 }

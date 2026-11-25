@@ -93,7 +93,7 @@ impl fmt::Display for StaleCache {
             f,
             "last seen {} (checked at {})",
             self.latest_version,
-            crate::timefmt::format_rfc3339(self.checked_at, false)
+            crate::timefmt::format_rfc3339_offset(self.checked_at)
         )
     }
 }

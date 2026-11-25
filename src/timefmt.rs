@@ -10,9 +10,17 @@ use serde::{Deserialize, Deserializer, Serializer, de};
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, UtcOffset};
 
-/// Format `at` in UTC the way chrono did. `zulu` picks the `Z` suffix (serde, and
-/// `to_rfc3339_opts(.., true)`) over `+00:00` (chrono's `to_rfc3339()`).
-pub(crate) fn format_rfc3339(at: OffsetDateTime, zulu: bool) -> String {
+/// Format `at` in UTC with a `Z` suffix, as chrono's serde and `to_rfc3339_opts(.., true)` did.
+pub(crate) fn format_rfc3339_z(at: OffsetDateTime) -> String {
+    format_utc(at, "Z")
+}
+
+/// Format `at` in UTC with a `+00:00` suffix, as chrono's `to_rfc3339()` did.
+pub(crate) fn format_rfc3339_offset(at: OffsetDateTime) -> String {
+    format_utc(at, "+00:00")
+}
+
+fn format_utc(at: OffsetDateTime, suffix: &str) -> String {
     let at = at.to_offset(UtcOffset::UTC);
     let nanos = at.nanosecond();
     // `is_multiple_of` needs Rust 1.90; the crate's MSRV is 1.89.
@@ -31,7 +39,7 @@ pub(crate) fn format_rfc3339(at: OffsetDateTime, zulu: bool) -> String {
         at.minute(),
         at.second(),
         fraction,
-        if zulu { "Z" } else { "+00:00" }
+        suffix
     )
 }
 
@@ -51,7 +59,7 @@ pub(crate) mod serde_rfc3339 {
     use super::*;
 
     pub(crate) fn serialize<S: Serializer>(at: &OffsetDateTime, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&format_rfc3339(*at, true))
+        s.serialize_str(&format_rfc3339_z(*at))
     }
 
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<OffsetDateTime, D::Error> {
@@ -68,7 +76,7 @@ pub(crate) mod serde_rfc3339_option {
 
     pub(crate) fn serialize<S: Serializer>(at: &Option<OffsetDateTime>, s: S) -> Result<S::Ok, S::Error> {
         match at {
-            Some(at) => s.serialize_str(&format_rfc3339(*at, true)),
+            Some(at) => s.serialize_str(&format_rfc3339_z(*at)),
             None => s.serialize_none(),
         }
     }

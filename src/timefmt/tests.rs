@@ -18,20 +18,20 @@ fn test_format_matches_chrono_digit_groups() {
     ];
     for (nanos, want) in cases {
         let at = base.replace_nanosecond(nanos).unwrap();
-        assert_eq!(format_rfc3339(at, true), want);
+        assert_eq!(format_rfc3339_z(at), want);
     }
 }
 
 #[test]
 fn test_format_non_zulu_uses_plus_zero_offset() {
     let at = datetime!(2024-03-14 01:02:03 UTC);
-    assert_eq!(format_rfc3339(at, false), "2024-03-14T01:02:03+00:00");
+    assert_eq!(format_rfc3339_offset(at), "2024-03-14T01:02:03+00:00");
 }
 
 #[test]
 fn test_format_converts_to_utc() {
     let at = datetime!(2024-03-14 06:32:03 +05:30);
-    assert_eq!(format_rfc3339(at, true), "2024-03-14T01:02:03Z");
+    assert_eq!(format_rfc3339_z(at), "2024-03-14T01:02:03Z");
 }
 
 #[test]
@@ -78,6 +78,6 @@ fn test_parse_rejects_missing_offset_and_garbage() {
 fn test_roundtrip_through_format_and_parse() {
     for nanos in [0, 1, 500_000_000, 123_456_789] {
         let at = datetime!(2024-03-14 01:02:03 UTC).replace_nanosecond(nanos).unwrap();
-        assert_eq!(parse_rfc3339(&format_rfc3339(at, true)).unwrap(), at);
+        assert_eq!(parse_rfc3339(&format_rfc3339_z(at)).unwrap(), at);
     }
 }

@@ -33,4 +33,5 @@ build-version = { git = "https://github.com/tatari-tv/build-version-rs", tag = "
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# Also a regular dependency; this entry only adds the `macros` feature (`datetime!`) for tests.
 time = { version = "0.3.55", features = ["macros"] }
