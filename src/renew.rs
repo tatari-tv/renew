@@ -6,11 +6,11 @@ use crate::install;
 use crate::platform;
 use crate::repo::RepoSlug;
 use crate::version::{InstalledVersion, Update, parse_current, parse_tag};
-use chrono::{DateTime, Utc};
 use semver::Version;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
+use time::OffsetDateTime;
 
 const DEFAULT_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_NETWORK_TIMEOUT_SECS: u64 = 5;
@@ -266,7 +266,7 @@ impl Renew {
         // Fail rather than fabricate: `Update`/`CacheEntry` both need an honest date, and
         // this used to silently default an unparseable GitHub timestamp to right now,
         // for both the report and the cache entry it seeds.
-        let published_at: DateTime<Utc> = match info.published_at.parse() {
+        let published_at = match crate::timefmt::parse_rfc3339(&info.published_at) {
             Ok(dt) => dt,
             Err(source) => {
                 log::warn!(
@@ -282,7 +282,7 @@ impl Renew {
 
         let entry = cache::CacheEntry {
             latest_version: latest.to_string(),
-            checked_at: Utc::now(),
+            checked_at: OffsetDateTime::now_utc(),
             published_at: Some(published_at),
             release_url: Some(info.html_url.clone()),
         };

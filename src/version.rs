@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
-use chrono::{DateTime, Utc};
 use semver::Version;
 use std::path::PathBuf;
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone)]
 pub struct Update {
@@ -9,7 +9,7 @@ pub struct Update {
     pub latest: Version,
     pub tag: String,
     pub release_url: String,
-    pub published_at: DateTime<Utc>,
+    pub published_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]

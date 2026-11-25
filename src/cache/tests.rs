@@ -1,12 +1,13 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use chrono::Utc;
 use std::time::Duration;
 use tempfile::TempDir;
+use time::OffsetDateTime;
+use time::macros::datetime;
 
 fn make_entry(version: &str, age_secs: i64) -> CacheEntry {
-    let checked_at = Utc::now() - chrono::Duration::seconds(age_secs);
+    let checked_at = OffsetDateTime::now_utc() - time::Duration::seconds(age_secs);
     CacheEntry {
         latest_version: version.to_string(),
         checked_at,
@@ -18,7 +19,7 @@ fn make_entry(version: &str, age_secs: i64) -> CacheEntry {
 fn make_legacy_entry(version: &str, age_secs: i64) -> CacheEntry {
     CacheEntry {
         latest_version: version.to_string(),
-        checked_at: Utc::now() - chrono::Duration::seconds(age_secs),
+        checked_at: OffsetDateTime::now_utc() - time::Duration::seconds(age_secs),
         published_at: None,
         release_url: None,
     }
@@ -125,4 +126,83 @@ fn test_entry_with_published_at_and_release_url_roundtrips() {
 
     assert_eq!(loaded.published_at, entry.published_at);
     assert_eq!(loaded.release_url, entry.release_url);
+}
+
+// Cache files written by chrono-era builds must keep loading, and what this build writes
+// must be byte-identical to what they wrote.
+
+fn write_fixture(dir: &Path, text: &str) {
+    std::fs::write(dir.join(CACHE_FILE), text).unwrap();
+}
+
+#[test]
+fn test_loads_chrono_era_cache_file() {
+    let tmp = TempDir::new().unwrap();
+    write_fixture(tmp.path(), include_str!("../../tests/fixtures/chrono-era/check.yml"));
+    let entry = load(tmp.path()).expect("chrono-era cache must load");
+    assert_eq!(entry.latest_version, "0.5.0");
+    assert_eq!(entry.checked_at, datetime!(2024-03-14 01:02:03.123456789 UTC));
+    assert_eq!(entry.published_at, Some(datetime!(2024-03-14 00:00:00 UTC)));
+    assert_eq!(
+        entry.release_url.as_deref(),
+        Some("https://github.com/tatari-tv/ccu/releases/tag/v0.5.0")
+    );
+}
+
+#[test]
+fn test_loads_chrono_era_legacy_cache_without_new_keys() {
+    let tmp = TempDir::new().unwrap();
+    write_fixture(
+        tmp.path(),
+        include_str!("../../tests/fixtures/chrono-era/check-legacy.yml"),
+    );
+    let entry = load(tmp.path()).expect("legacy cache must load");
+    assert_eq!(entry.checked_at, datetime!(2024-03-14 01:02:03 UTC));
+    assert!(entry.published_at.is_none());
+    assert!(entry.release_url.is_none());
+}
+
+#[test]
+fn test_loads_chrono_era_cache_with_null_published_at() {
+    let tmp = TempDir::new().unwrap();
+    write_fixture(
+        tmp.path(),
+        include_str!("../../tests/fixtures/chrono-era/check-null-published.yml"),
+    );
+    let entry = load(tmp.path()).expect("null published-at must load");
+    assert_eq!(entry.checked_at, datetime!(2024-03-14 01:02:03.5 UTC));
+    assert!(entry.published_at.is_none());
+}
+
+#[test]
+fn test_chrono_era_fixtures_reserialize_byte_for_byte() {
+    for text in [
+        include_str!("../../tests/fixtures/chrono-era/check.yml"),
+        include_str!("../../tests/fixtures/chrono-era/check-null-published.yml"),
+    ] {
+        let entry: CacheEntry = serde_yaml::from_str(text).unwrap();
+        assert_eq!(serde_yaml::to_string(&entry).unwrap(), text);
+    }
+}
+
+#[test]
+fn test_cache_entry_serializes_as_chrono_did() {
+    let at = datetime!(2024-03-14 01:02:03 UTC);
+    let entry = CacheEntry {
+        latest_version: "0.5.0".to_string(),
+        checked_at: at,
+        published_at: None,
+        release_url: None,
+    };
+    assert_eq!(
+        serde_yaml::to_string(&entry).unwrap(),
+        "latest-version: 0.5.0\nchecked-at: 2024-03-14T01:02:03Z\npublished-at: null\nrelease-url: null\n"
+    );
+}
+
+#[test]
+fn test_unparseable_timestamp_is_a_cache_miss() {
+    let tmp = TempDir::new().unwrap();
+    write_fixture(tmp.path(), "latest-version: 0.5.0\nchecked-at: yesterday\n");
+    assert!(load(tmp.path()).is_none());
 }

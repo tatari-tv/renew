@@ -1,14 +1,15 @@
 use crate::error::{Error, Result};
-use chrono::{DateTime, Utc};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct BackupMeta {
     pub(crate) version: String,
-    pub(crate) saved_at: DateTime<Utc>,
+    #[serde(with = "crate::timefmt::serde_rfc3339")]
+    pub(crate) saved_at: OffsetDateTime,
     pub(crate) original_path: PathBuf,
 }
 
@@ -30,7 +31,7 @@ pub(crate) fn capture(backup_dir: &Path, current_binary: &Path, current_version:
     // Write meta atomically: serialize to .new, rename to final.
     let meta = BackupMeta {
         version: current_version.to_string(),
-        saved_at: Utc::now(),
+        saved_at: OffsetDateTime::now_utc(),
         original_path: current_binary.to_path_buf(),
     };
     let yaml = serde_yaml::to_string(&meta)?;

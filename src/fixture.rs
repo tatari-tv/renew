@@ -6,13 +6,13 @@
 
 use crate::Renew;
 use crate::cache::{self, CacheEntry};
-use chrono::Utc;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use time::OffsetDateTime;
 
 /// A loopback HTTP server that answers every request with one canned status.
 pub(crate) struct CannedApi {
@@ -88,7 +88,7 @@ pub(crate) fn offline_renew(api: &CannedApi, cache_dir: &Path) -> Renew {
 /// post-schema-bump cache is in). `seed_legacy_cache` covers the field-less shape that
 /// every cache file in the fleet actually carries today.
 pub(crate) fn seed_cache(cache_dir: &Path, latest: &str, age: Duration) {
-    let checked_at = Utc::now() - chrono::Duration::from_std(age).expect("representable age");
+    let checked_at = OffsetDateTime::now_utc() - time::Duration::try_from(age).expect("representable age");
     seed_cache_with(cache_dir, latest, checked_at, checked_at, &default_release_url(latest));
 }
 
@@ -97,8 +97,8 @@ pub(crate) fn seed_cache(cache_dir: &Path, latest: &str, age: Duration) {
 pub(crate) fn seed_cache_with(
     cache_dir: &Path,
     latest: &str,
-    checked_at: chrono::DateTime<Utc>,
-    published_at: chrono::DateTime<Utc>,
+    checked_at: OffsetDateTime,
+    published_at: OffsetDateTime,
     release_url: &str,
 ) {
     let entry = CacheEntry {
@@ -121,8 +121,11 @@ fn default_release_url(latest: &str) -> String {
 /// a cache MISS rather than feed a report with data it doesn't have.
 pub(crate) fn seed_legacy_cache(cache_dir: &Path, latest: &str, age: Duration) {
     std::fs::create_dir_all(cache_dir).expect("cache dir");
-    let checked_at = Utc::now() - chrono::Duration::from_std(age).expect("representable age");
-    let yaml = format!("latest-version: {latest}\nchecked-at: {}\n", checked_at.to_rfc3339());
+    let checked_at = OffsetDateTime::now_utc() - time::Duration::try_from(age).expect("representable age");
+    let yaml = format!(
+        "latest-version: {latest}\nchecked-at: {}\n",
+        crate::timefmt::format_rfc3339_offset(checked_at)
+    );
     std::fs::write(cache_dir.join(cache::CACHE_FILE), yaml).expect("write legacy cache entry");
 }
 
